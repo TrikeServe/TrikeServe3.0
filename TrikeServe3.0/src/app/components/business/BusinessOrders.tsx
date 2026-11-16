@@ -60,7 +60,8 @@ interface Order {
    */
   status: 'pending' | 'payment-confirmed' | 'confirmed' | 'preparing' | 'ready' | 'on-the-way' | 'delivered' | 'cancelled';
   /** GCash only. The delivery fee is cash, collected by the rider at the door. */
-  paymentMethod: 'gcash';
+  /** GCash prepaid, or cash the rider collects at the door. */
+  paymentMethod: 'gcash' | 'cod';
   address: string;
   dropoffLat?: number | null;
   dropoffLng?: number | null;
@@ -887,7 +888,10 @@ export default function BusinessOrders() {
           // pickup milestone if ride_requests is briefly behind the order row.
           status: orderAlreadyPickedUp ? 'on-the-way' : dbOrder.status || 'pending',
           driverStatus: orderAlreadyPickedUp ? 'picked-up' : null,
-          paymentMethod: 'gcash',
+          // Cash-on-delivery orders must survive the round trip through this
+          // mapper, or the shop would offer to verify a transfer that never
+          // happened and the rider would collect nothing.
+          paymentMethod: String(dbOrder.payment_method || 'gcash').toLowerCase() === 'gcash' ? 'gcash' : 'cod',
           paymentProofUrl: dbOrder.payment_proof_url ?? null,
           paymentProofUploadedAt: dbOrder.payment_proof_uploaded_at ?? null,
           paymentConfirmedAt: dbOrder.payment_confirmed_at ?? null,
@@ -1169,38 +1173,63 @@ export default function BusinessOrders() {
     setIsAcceptingOrder(true);
     setPaymentError(null);
 
+    /*
+     * Cash on delivery has nothing to verify: no transfer happened yet, so
+     * accepting the order is the whole action and `payment_confirmed_at` stays
+     * null. That null is also what keeps cash orders out of the "awaiting
+     * payment" backlog and out of the GCash confirmation figures.
+     */
+    const isCashOnDelivery = order.paymentMethod !== 'gcash';
     let paymentConfirmedAt = order.paymentConfirmedAt;
     if (order.status === 'pending') {
-      const result = await supabaseHelpers.confirmOrderPayment(order.id, user?.email);
+      if (isCashOnDelivery) {
+        void supabaseHelpers.notifyBusinessOrderStatusChange({
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          status: 'cod-accepted',
+        }).catch(err => console.error('[BusinessOrders] Failed to message COD acceptance:', err));
+        logAudit({
+          action: 'accept_cod_order',
+          actorRole: 'business',
+          entityType: 'order',
+          entityId: order.id,
+          summary: `Accepted cash-on-delivery order ${order.orderNumber}`,
+          details: { order_number: order.orderNumber, total: order.total },
+          actorEmail: user?.email,
+          actorName: user?.name,
+        });
+      } else {
+        const result = await supabaseHelpers.confirmOrderPayment(order.id, user?.email);
 
-      if (!result.success) {
-        setPaymentError(result.error || 'Could not accept this order.');
-        setIsAcceptingOrder(false);
-        return false;
+        if (!result.success) {
+          setPaymentError(result.error || 'Could not accept this order.');
+          setIsAcceptingOrder(false);
+          return false;
+        }
+
+        paymentConfirmedAt = new Date().toISOString();
+        void supabaseHelpers.notifyBusinessOrderStatusChange({
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          status: 'payment-confirmed',
+        }).catch(err => console.error('[BusinessOrders] Failed to message payment confirmation:', err));
+        logAudit({
+          action: 'confirm_payment',
+          actorRole: 'business',
+          entityType: 'order',
+          entityId: order.id,
+          summary: `Confirmed GCash payment for order ${order.orderNumber}`,
+          details: { order_number: order.orderNumber, total: order.total },
+          actorEmail: user?.email,
+          actorName: user?.name,
+        });
       }
-
-      paymentConfirmedAt = new Date().toISOString();
-      void supabaseHelpers.notifyBusinessOrderStatusChange({
-        orderId: order.id,
-        orderNumber: order.orderNumber,
-        status: 'payment-confirmed',
-      }).catch(err => console.error('[BusinessOrders] Failed to message payment confirmation:', err));
-      logAudit({
-        action: 'confirm_payment',
-        actorRole: 'business',
-        entityType: 'order',
-        entityId: order.id,
-        summary: `Confirmed GCash payment for order ${order.orderNumber}`,
-        details: { order_number: order.orderNumber, total: order.total },
-        actorEmail: user?.email,
-        actorName: user?.name,
-      });
     } else if (order.status !== 'payment-confirmed') {
       setIsAcceptingOrder(false);
       return false;
     }
 
-    if (!paymentConfirmedAt) {
+    if (!isCashOnDelivery && !paymentConfirmedAt) {
       setPaymentError('Confirm the GCash payment before accepting this order.');
       setIsAcceptingOrder(false);
       return false;
@@ -1210,7 +1239,9 @@ export default function BusinessOrders() {
     if (!didStartPreparing) {
       // A payment may have been confirmed successfully even if the following
       // order-status update failed. Leave it ready to retry as an accepted order.
-      const acceptedOrder = { ...order, status: 'payment-confirmed' as const, paymentConfirmedAt };
+      const acceptedOrder = isCashOnDelivery
+        ? order
+        : { ...order, status: 'payment-confirmed' as const, paymentConfirmedAt };
       setOrders((current) => current.map((item) => item.id === order.id ? acceptedOrder : item));
       setSelectedOrder((current) => current?.id === order.id ? acceptedOrder : current);
       setIsAcceptingOrder(false);
@@ -2382,9 +2413,18 @@ export default function BusinessOrders() {
                     Payment
                   </h3>
                   <p className="text-xs md:text-sm text-[var(--muted-foreground)] mb-3">
-                    ₱{(selectedOrder.total - selectedOrder.deliveryFee).toFixed(2)} by GCash, ₱{selectedOrder.deliveryFee.toFixed(2)} delivery fee in cash to the rider.
+                    {selectedOrder.paymentMethod === 'gcash'
+                      ? `₱${(selectedOrder.total - selectedOrder.deliveryFee).toFixed(2)} by GCash, ₱${selectedOrder.deliveryFee.toFixed(2)} delivery fee in cash to the rider.`
+                      : `Cash on delivery: the rider collects ₱${selectedOrder.total.toFixed(2)} (₱${(selectedOrder.total - selectedOrder.deliveryFee).toFixed(2)} food + ₱${selectedOrder.deliveryFee.toFixed(2)} delivery fee).`}
                   </p>
 
+                  {selectedOrder.paymentMethod !== 'gcash' && (
+                    <p className="mb-3 rounded-xl bg-[var(--amber-soft)] px-3 py-2.5 text-xs text-[var(--amber-ink)]">
+                      Nothing to verify before cooking. Accepting the order is all that is needed; the cash is recorded when the rider completes the delivery.
+                    </p>
+                  )}
+
+                  {selectedOrder.paymentMethod === 'gcash' && (<>
                   {selectedOrder.paymentProofUrl ? (
                     <FullSizeImagePreview
                       src={selectedOrder.paymentProofUrl}
@@ -2423,6 +2463,7 @@ export default function BusinessOrders() {
                       <span className="font-semibold text-[var(--ink)]">Start preparing</span>.
                     </p>
                   )}
+                  </>)}
 
                   {paymentError && (
                     <p role="alert" className="mt-2 text-xs text-[var(--error)]">
@@ -2446,18 +2487,32 @@ export default function BusinessOrders() {
                     <span className="text-lg md:text-xl font-bold text-[var(--primary)]">₱{selectedOrder.total.toFixed(2)}</span>
                   </div>
                   <div className="mt-2 md:mt-3 flex flex-wrap gap-2">
-                    <Badge className="bg-[var(--success)] text-white text-xs md:text-sm">
-                      <CheckCircle className="w-3 h-3 mr-1" />
-                      Paid by GCash
-                    </Badge>
-                    {/* The rider collects this part in cash. It was folded
-                        into the COD badge before, which read as though the
-                        whole order was unpaid -- the food had already been
-                        transferred. */}
-                    <Badge className="border-[var(--amber)] text-[var(--amber)] text-xs md:text-sm" variant="outline">
-                      <AlertCircle className="w-3 h-3 mr-1" />
-                      Delivery fee: cash to rider
-                    </Badge>
+                    {selectedOrder.paymentMethod === 'gcash' ? (
+                      <>
+                        <Badge className="bg-[var(--success)] text-white text-xs md:text-sm">
+                          <CheckCircle className="w-3 h-3 mr-1" />
+                          Paid by GCash
+                        </Badge>
+                        {/* The rider collects this part in cash. It was folded
+                            into the COD badge before, which read as though the
+                            whole order was unpaid -- the food had already been
+                            transferred. */}
+                        <Badge className="border-[var(--amber)] text-[var(--amber)] text-xs md:text-sm" variant="outline">
+                          <AlertCircle className="w-3 h-3 mr-1" />
+                          Delivery fee: cash to rider
+                        </Badge>
+                      </>
+                    ) : (
+                      <>
+                        <Badge className="border-[var(--amber)] text-[var(--amber)] text-xs md:text-sm" variant="outline">
+                          <AlertCircle className="w-3 h-3 mr-1" />
+                          Cash on delivery
+                        </Badge>
+                        <Badge className="text-xs md:text-sm" variant="outline">
+                          Rider collects ₱{selectedOrder.total.toFixed(2)}
+                        </Badge>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -2769,7 +2824,9 @@ export default function BusinessOrders() {
               Accept this order and start preparing?
             </h2>
             <p className="text-xs text-[var(--muted-foreground)] mb-3">
-              This confirms the GCash payment and moves the order to Preparing.
+              {selectedOrder.paymentMethod === 'gcash'
+                ? 'This confirms the GCash payment and moves the order to Preparing.'
+                : 'This accepts the order and moves it to Preparing. The rider collects the cash on delivery.'}
             </p>
             <p className="text-sm text-[var(--muted-foreground)] mb-1">Order #{selectedOrder.orderNumber}</p>
             <p className="text-sm text-[var(--muted-foreground)] mb-1">{selectedOrder.customerName}</p>
@@ -2777,7 +2834,7 @@ export default function BusinessOrders() {
             {/* Saying what is being confirmed, not just what is being clicked.
                 With no screenshot attached the shop is vouching from the amount
                 alone, which is a different claim from having checked a receipt. */}
-            {!selectedOrder.paymentProofUrl && (
+            {selectedOrder.paymentMethod === 'gcash' && !selectedOrder.paymentProofUrl && (
               <p className="mb-4 rounded-xl bg-[var(--amber-soft)] px-3 py-2 text-xs text-[var(--amber-ink)]">
                 No payment proof attached. Check the transfer with the customer
                 before accepting.

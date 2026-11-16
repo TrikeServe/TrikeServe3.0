@@ -44,6 +44,10 @@ interface OrderData {
   total: number;
   paymentMethod: string;
   paymentConfirmedAt?: string | null;
+  /** What the customer transferred by GCash; 0 on a cash-on-delivery order. */
+  gcashAmount?: number | null;
+  /** When the rider recorded collecting the cash, on a COD order. */
+  cashCollectedAt?: string | null;
   needsCutlery: boolean;
   createdAt: string;
   driverName?: string;
@@ -100,8 +104,10 @@ function buildOrderData(dbOrder: any): OrderData {
     subtotal: dbOrder.subtotal || 0,
     deliveryFee: dbOrder.delivery_fee || 0,
     total: dbOrder.total || 0,
-    paymentMethod: dbOrder.payment_method || 'cash',
+    paymentMethod: String(dbOrder.payment_method || 'cash').toLowerCase(),
     paymentConfirmedAt: dbOrder.payment_confirmed_at ?? null,
+    gcashAmount: dbOrder.gcash_amount ?? null,
+    cashCollectedAt: dbOrder.cash_collected_at ?? null,
     needsCutlery: dbOrder.needs_cutlery || false,
     createdAt: dbOrder.created_at,
     // Driver identity and progress come from the current live ride request.
@@ -1364,9 +1370,15 @@ export default function OrderDetail() {
             <h3 className="font-bold text-[var(--ink)] text-sm md:text-base">Payment</h3>
           </div>
           <div className="flex flex-wrap items-center gap-2 mb-4">
-            <Badge className="bg-[var(--success)] text-white text-xs">
-              Food: GCash
-            </Badge>
+            {order.paymentMethod === 'gcash' ? (
+              <Badge className="bg-[var(--success)] text-white text-xs">
+                Food: GCash
+              </Badge>
+            ) : (
+              <Badge className="bg-[var(--amber)] text-white text-xs">
+                Food: cash on delivery
+              </Badge>
+            )}
             {/* The rider collects this part at the door, so it stays unpaid for
                 most of the order's life. Showing one badge for the whole order
                 made a fully paid order look identical to an unpaid one. */}
@@ -1378,14 +1390,18 @@ export default function OrderDetail() {
                   : 'border-[var(--amber)] text-[var(--amber)] text-xs'
               }
             >
-              {order.status === 'delivered' ? 'Delivery fee: paid' : 'Delivery fee: cash to rider'}
+              {order.paymentMethod === 'gcash'
+                ? order.status === 'delivered' ? 'Delivery fee: paid' : 'Delivery fee: cash to rider'
+                : order.cashCollectedAt || order.status === 'delivered'
+                  ? 'Cash: collected by rider'
+                  : `Cash to rider: ₱${order.total.toFixed(2)}`}
             </Badge>
           </div>
 
           {/* The customer's own screenshot, so the record is on their side too
               and not only in the shop's. Tappable, because the thumbnail is
               small and a GCash receipt is not legible at that size. */}
-          {order.paymentProofUrl && (
+          {order.paymentMethod === 'gcash' && order.paymentProofUrl && (
             <FullSizeImagePreview
               src={order.paymentProofUrl}
               alt={`GCash payment proof for order ${order.orderNumber}`}
@@ -1404,13 +1420,15 @@ export default function OrderDetail() {
 
           {order.status === 'pending' && !order.paymentConfirmedAt && (
             <p className="mb-3 text-xs text-[var(--muted-foreground)]">
-              Waiting for the shop to confirm your GCash payment.
+              {order.paymentMethod === 'gcash'
+                ? 'Waiting for the shop to confirm your GCash payment.'
+                : `Waiting for the shop to accept your order. Pay ₱${order.total.toFixed(2)} in cash to the rider on delivery.`}
             </p>
           )}
 
           <div className="space-y-2 pt-3 border-t-2 border-[var(--muted)]">
             <div className="flex justify-between text-sm text-[var(--muted-foreground)]">
-              <span>Food subtotal (GCash)</span>
+              <span>{order.paymentMethod === 'gcash' ? 'Food subtotal (GCash)' : 'Food subtotal (cash)'}</span>
               <span>₱{order.subtotal.toFixed(2)}</span>
             </div>
             <div className="flex justify-between text-sm text-[var(--muted-foreground)]">
@@ -1421,8 +1439,16 @@ export default function OrderDetail() {
                 and the payment is not: this is where the two are made explicit
                 on the order the customer keeps. */}
             <div className="flex justify-between text-xs text-[var(--muted-foreground)] pt-1">
-              <span>Transferred by GCash</span>
-              <span>₱{(order.gcashAmount ?? order.subtotal).toFixed(2)}</span>
+              <span>
+                {order.paymentMethod === 'gcash'
+                  ? 'Transferred by GCash'
+                  : order.cashCollectedAt ? 'Paid in cash to the rider' : 'Cash due to the rider'}
+              </span>
+              <span>
+                ₱{order.paymentMethod === 'gcash'
+                  ? (order.gcashAmount ?? order.subtotal).toFixed(2)
+                  : order.total.toFixed(2)}
+              </span>
             </div>
             <div className="flex justify-between text-base font-bold text-[var(--ink)] pt-2 border-t-2 border-[var(--border)]">
               <span>Total</span>

@@ -9,6 +9,8 @@ import {
   Check,
   AlertCircle,
   X,
+  Banknote,
+  CreditCard,
 } from "lucide-react";
 import { Navigate, useLocation, useNavigate } from "react-router";
 import { Card } from "../ui/card";
@@ -71,15 +73,15 @@ export default function CartCheckout() {
   const [fromDefaultAddress, setFromDefaultAddress] = useState(false);
 
   /*
-   * GCash only, for the food.
+   * How the food half of the bill is paid.
    *
-   * Cash was the sole option and the whole checkout said "Pay with cash on
-   * delivery". It is not an option any more, so there is nothing to select and
-   * nothing to keep in state -- `paymentMethod` is derived from the fact below
-   * rather than chosen, which is also why the confirm screen can no longer offer
-   * a choice the database does not have.
+   * GCash stays the default: the customer transfers before the shop accepts, and
+   * the shop verifies a screenshot. Cash on delivery skips that entire chain --
+   * the rider collects the food amount and the delivery fee at the door -- so the
+   * choice also decides which halves of this screen exist. The delivery fee is
+   * cash to the rider either way.
    */
-  const paymentMethod = 'gcash' as const;
+  const [paymentMethod, setPaymentMethod] = useState<"gcash" | "cod">("gcash");
 
   /*
    * Required payment proof: the screenshot of the GCash transfer the shop will
@@ -184,6 +186,12 @@ export default function CartCheckout() {
   useEffect(() => {
     if (!imageProofRequired) setProofError(null);
   }, [imageProofRequired]);
+
+  // A COD order has no transfer to prove, so a stale proof error must not follow
+  // the customer when they switch away from GCash.
+  useEffect(() => {
+    if (paymentMethod === "cod") setProofError(null);
+  }, [paymentMethod]);
 
   useEffect(() => {
     if (!enforceBoundary || allowAnyDeliveryAddress) setDeliveryBoundaryError(null);
@@ -532,7 +540,7 @@ export default function CartCheckout() {
       ? acceptedOutsideRouteDeliveryRef.current.terminalId
       : null;
     const resolvedTerminalId = acceptedTerminalId ?? deliveryQuote.terminalId;
-    if (imageProofRequired && !proofFile) {
+    if (paymentMethod === "gcash" && imageProofRequired && !proofFile) {
       setProofError('Upload your GCash payment proof before placing the order.');
       setProofValidationAttempt((attempt) => attempt + 1);
       return;
@@ -716,7 +724,9 @@ export default function CartCheckout() {
                * and the shop cannot reconcile a transfer against a figure that
                * includes money the customer is going to hand a rider instead.
                */
-              gcash_amount: gcashAmount,
+              // Cash orders never moved money through GCash, so nothing is
+              // reported as transferred; the rider collects subtotal + fee.
+              gcash_amount: paymentMethod === "gcash" ? gcashAmount : 0,
               delivery_fee_cash: cashOnDeliveryAmount,
             },
           ])
@@ -771,7 +781,7 @@ export default function CartCheckout() {
          * is unavailable, keep the order and tell the customer where the receipt
          * can be attached again.
          */
-        if (savedOrder?.id && proofFile) {
+        if (savedOrder?.id && proofFile && paymentMethod === "gcash") {
           setIsUploadingProof(true);
           /*
            * The upload is contained rather than merely reported.
@@ -1293,32 +1303,69 @@ export default function CartCheckout() {
         <div className="pb-6">
           <h2 className="mb-3 text-lg font-bold text-[var(--ink)]">Payment</h2>
           <p className="mb-4 text-sm text-[var(--muted-foreground)]">
-            Send the food payment to the restaurant by GCash. Pay the delivery fee
-            separately in cash to your rider.
+            {paymentMethod === "gcash"
+              ? "Send the food payment to the restaurant by GCash. Pay the delivery fee separately in cash to your rider."
+              : "Pay the rider in cash when your order arrives. No transfer and no screenshot needed."}
           </p>
 
           {/*
-            The single option, shown as a chosen state rather than a picker.
-
-            There is nothing to choose between, so it is a read-out. Drawn as the
-            same "selected" panel the old cash option used, because that is what
-            this row has always looked like and a different treatment would read
-            as "something else is available".
+            Two ways to pay, and the choice reshapes the rest of this screen.
+            GCash is the default because it is what checkout has always done;
+            cash on delivery removes the transfer, the shop's instructions and
+            the proof upload altogether.
           */}
-          <div className="mb-4 rounded-2xl border-2 border-[var(--success)] bg-[var(--success)]/10 p-4 sm:p-5">
-            <p className="text-xs font-extrabold uppercase tracking-wider text-[var(--success)]">
-              GCash to the restaurant
-            </p>
-            <p className="mt-1 text-sm font-semibold text-[var(--ink)]">
-              Transfer this amount only
-            </p>
-            <p className="mt-2 text-4xl font-black tabular-nums leading-none text-[var(--success)]">
-              ₱{gcashAmount.toFixed(2)}
-            </p>
-            <p className="mt-3 rounded-lg bg-surface/80 px-3 py-2 text-xs font-semibold text-[var(--ink)]">
-              Do not add the delivery fee. Pay that separately in cash to your rider.
-            </p>
+          <div role="radiogroup" aria-label="Payment method" className="mb-4 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={paymentMethod === "gcash"}
+              onClick={() => setPaymentMethod("gcash")}
+              className={`flex min-h-14 items-center justify-center gap-2 rounded-2xl border-2 px-3 text-sm font-bold transition-colors ${paymentMethod === "gcash" ? "border-[var(--success)] bg-[var(--success)]/10 text-[var(--success)]" : "border-line bg-card text-[var(--muted-foreground)] hover:bg-soft"}`}
+            >
+              <CreditCard className="size-4" aria-hidden="true" /> GCash
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={paymentMethod === "cod"}
+              onClick={() => setPaymentMethod("cod")}
+              className={`flex min-h-14 items-center justify-center gap-2 rounded-2xl border-2 px-3 text-sm font-bold transition-colors ${paymentMethod === "cod" ? "border-[var(--amber)] bg-[var(--amber-soft)] text-[var(--amber-ink)]" : "border-line bg-card text-[var(--muted-foreground)] hover:bg-soft"}`}
+            >
+              <Banknote className="size-4" aria-hidden="true" /> Cash on delivery
+            </button>
           </div>
+
+          {paymentMethod === "gcash" ? (
+            <div className="mb-4 rounded-2xl border-2 border-[var(--success)] bg-[var(--success)]/10 p-4 sm:p-5">
+              <p className="text-xs font-extrabold uppercase tracking-wider text-[var(--success)]">
+                GCash to the restaurant
+              </p>
+              <p className="mt-1 text-sm font-semibold text-[var(--ink)]">
+                Transfer this amount only
+              </p>
+              <p className="mt-2 text-4xl font-black tabular-nums leading-none text-[var(--success)]">
+                ₱{gcashAmount.toFixed(2)}
+              </p>
+              <p className="mt-3 rounded-lg bg-surface/80 px-3 py-2 text-xs font-semibold text-[var(--ink)]">
+                Do not add the delivery fee. Pay that separately in cash to your rider.
+              </p>
+            </div>
+          ) : (
+            <div className="mb-4 rounded-2xl border-2 border-[var(--amber)] bg-[var(--amber-soft)] p-4 sm:p-5">
+              <p className="text-xs font-extrabold uppercase tracking-wider text-[var(--amber-ink)]">
+                Cash on delivery
+              </p>
+              <p className="mt-1 text-sm font-semibold text-[var(--ink)]">
+                Pay the rider when your order arrives
+              </p>
+              <p className="mt-2 text-4xl font-black tabular-nums leading-none text-[var(--amber-ink)]">
+                ₱{total.toFixed(2)}
+              </p>
+              <p className="mt-3 rounded-lg bg-surface/80 px-3 py-2 text-xs font-semibold text-[var(--ink)]">
+                ₱{subtotal.toFixed(2)} for the food and ₱{deliveryFee.toFixed(2)} delivery fee. Please have the exact amount ready.
+              </p>
+            </div>
+          )}
 
           {/*
             The shop's own instructions, verbatim.
@@ -1328,6 +1375,8 @@ export default function CartCheckout() {
             as they wrote them. A shop that has not set any still gets a usable
             screen, just a thinner one.
           */}
+          {paymentMethod === "gcash" && (
+            <>
           {paymentInstructions ? (
             <div className="mb-4 rounded-xl border border-line bg-[var(--surface)] p-4">
               <p className="mb-1 text-xs font-bold uppercase tracking-wider text-[var(--muted-foreground)]">
@@ -1367,12 +1416,26 @@ export default function CartCheckout() {
               include it in the GCash amount above.
             </span>
           </p>
+            </>
+          )}
+
+          {paymentMethod === "cod" && (
+            <p className="mt-3 flex items-start gap-2 rounded-xl bg-[var(--soft)] px-3 py-2.5 text-xs text-[var(--ink)]">
+              <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              <span>
+                The shop accepts this order without a payment screenshot. Keep
+                ₱{total.toFixed(2)} ready for the rider.
+              </span>
+            </p>
+          )}
         </div>
 
         {/* Subtotal summary */}
         <div className="space-y-2 border-t border-[var(--border)] pt-4">
           <div className="flex items-center justify-between text-sm">
-            <span className="text-[var(--muted-foreground)]">Food amount (GCash to restaurant)</span>
+            <span className="text-[var(--muted-foreground)]">
+              {paymentMethod === "gcash" ? "Food amount (GCash to restaurant)" : "Food amount (cash on delivery)"}
+            </span>
             <span className="font-semibold text-[var(--ink)]">
               ₱{subtotal.toFixed(2)}
             </span>
@@ -1384,7 +1447,9 @@ export default function CartCheckout() {
             </span>
           </div>
           <div className="flex items-center justify-between border-t border-dashed border-[var(--border)] pt-2 text-sm">
-            <span className="font-semibold text-[var(--ink)]">Order total (GCash + delivery cash)</span>
+            <span className="font-semibold text-[var(--ink)]">
+              {paymentMethod === "gcash" ? "Order total (GCash + delivery cash)" : "Order total (cash to rider)"}
+            </span>
             <span className="font-bold text-[var(--ink)]">
               ₱{total.toFixed(2)}
             </span>
@@ -1394,21 +1459,37 @@ export default function CartCheckout() {
 
       {/* Keep the GCash transfer amount prominent beside the sticky action. */}
       <div className="fixed bottom-0 left-0 right-0 z-50 border-t-2 border-[var(--border)] bg-surface px-5 py-3 shadow-[0_-8px_24px_rgba(0,0,0,0.08)]">
-        <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-[var(--success)]/40 bg-[var(--success)]/10 px-4 py-2.5">
-          <div className="min-w-0">
-            <p className="text-[11px] font-extrabold uppercase tracking-wide text-[var(--success)]">
-              Send to restaurant by GCash
-            </p>
-            <p className="text-xs text-[var(--muted-foreground)]">Transfer this amount only</p>
+        {paymentMethod === "gcash" ? (
+          <>
+            <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-[var(--success)]/40 bg-[var(--success)]/10 px-4 py-2.5">
+              <div className="min-w-0">
+                <p className="text-[11px] font-extrabold uppercase tracking-wide text-[var(--success)]">
+                  Send to restaurant by GCash
+                </p>
+                <p className="text-xs text-[var(--muted-foreground)]">Transfer this amount only</p>
+              </div>
+              <span className="shrink-0 text-2xl font-black tabular-nums text-[var(--success)]">
+                ₱{gcashAmount.toFixed(2)}
+              </span>
+            </div>
+            <div className="mb-3 flex items-center justify-between text-xs">
+              <span className="text-[var(--muted-foreground)]">Order total, including delivery cash</span>
+              <span className="font-semibold text-[var(--ink)]">₱{total.toFixed(2)}</span>
+            </div>
+          </>
+        ) : (
+          <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--amber)]/50 bg-[var(--amber-soft)] px-4 py-2.5">
+            <div className="min-w-0">
+              <p className="text-[11px] font-extrabold uppercase tracking-wide text-[var(--amber-ink)]">
+                Cash on delivery
+              </p>
+              <p className="text-xs text-[var(--muted-foreground)]">Pay the rider on arrival</p>
+            </div>
+            <span className="shrink-0 text-2xl font-black tabular-nums text-[var(--amber-ink)]">
+              ₱{total.toFixed(2)}
+            </span>
           </div>
-          <span className="shrink-0 text-2xl font-black tabular-nums text-[var(--success)]">
-            ₱{gcashAmount.toFixed(2)}
-          </span>
-        </div>
-        <div className="mb-3 flex items-center justify-between text-xs">
-          <span className="text-[var(--muted-foreground)]">Order total, including delivery cash</span>
-          <span className="font-semibold text-[var(--ink)]">₱{total.toFixed(2)}</span>
-        </div>
+        )}
         <button
           type="button"
           onClick={handlePlaceOrder}

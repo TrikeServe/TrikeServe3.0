@@ -453,7 +453,12 @@ export default function CustomerHome() {
   const [showSharedRides, setShowSharedRides] = useState(false);
   const [showShareLobby, setShowShareLobby] = useState(false);
   const [shareLobbyInitialId, setShareLobbyInitialId] = useState<string | undefined>();
-  const [paymentMethod] = useState<'COD'>('COD');
+  /*
+   * How the ride is paid. Cash stays the default, and GCash is recorded as
+   * prepaid -- the rider is told not to collect at the door. The delivery leg of
+   * a food order uses its own payment method and is unaffected by this choice.
+   */
+  const [paymentMethod, setPaymentMethod] = useState<'COD' | 'GCASH'>('COD');
   const [activeRide, setActiveRide] = useState<any>(null);
   const [rideStatus, setRideStatus] = useState<'searching' | 'driver-found' | 'picking-up' | 'in-transit' | null>(null);
    // When the current driver search began, so the "Finding a Driver" screen can show
@@ -6308,13 +6313,33 @@ const getPrice = () => {
             {/* Payment Method */}
             <div className="mb-4">
               <p className="text-sm font-semibold text-[var(--muted-foreground)] mb-2">Payment Method</p>
-              <div className="grid grid-cols-1 gap-2">
-                <div className="p-3 border-2 rounded-xl border-[var(--primary)] bg-[var(--primary-soft)]">
+              <div role="radiogroup" aria-label="Payment method" className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={paymentMethod === 'COD'}
+                  onClick={() => setPaymentMethod('COD')}
+                  className={`min-h-14 rounded-xl border-2 p-3 transition-colors ${paymentMethod === 'COD' ? 'border-[var(--primary)] bg-[var(--primary-soft)]' : 'border-line bg-card hover:bg-soft'}`}
+                >
                   <div className="flex items-center justify-center gap-2">
                     <span className="text-xl">{"\u{1F4B5}"}</span>
-                    <span className="font-semibold text-[var(--ink)]">Cash</span>
+                    <span className={`font-semibold ${paymentMethod === 'COD' ? 'text-[var(--ink)]' : 'text-[var(--muted-foreground)]'}`}>Cash</span>
                   </div>
-                </div>
+                  <p className="mt-1 text-[10px] font-semibold text-[var(--muted-foreground)]">Pay the driver</p>
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={paymentMethod === 'GCASH'}
+                  onClick={() => setPaymentMethod('GCASH')}
+                  className={`min-h-14 rounded-xl border-2 p-3 transition-colors ${paymentMethod === 'GCASH' ? 'border-[var(--primary)] bg-[var(--primary-soft)]' : 'border-line bg-card hover:bg-soft'}`}
+                >
+                  <div className="flex items-center justify-center gap-2">
+                    <span className="text-xl">{"\u{1F4F1}"}</span>
+                    <span className={`font-semibold ${paymentMethod === 'GCASH' ? 'text-[var(--ink)]' : 'text-[var(--muted-foreground)]'}`}>GCash</span>
+                  </div>
+                  <p className="mt-1 text-[10px] font-semibold text-[var(--muted-foreground)]">Prepaid</p>
+                </button>
               </div>
             </div>
 
