@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate, Link } from "react-router";
 import { ChevronDown, Eye, EyeOff, Users } from "lucide-react";
 import { armWelcomeGreeting } from "../../lib/welcomeGreeting";
+import { clearGuestSignout, peekGuestSignout, type GuestSignoutNotice } from "../../lib/guestSignoutNotice";
 import { useDevModeFeature, useDevModeStatus } from "../hooks/useDevModeSettings";
 import { isSuperAdminEmail, SUPER_ADMIN_EMAIL } from "../../lib/superAdminIdentity";
 import { publicSupabase } from "../../lib/supabase";
@@ -79,7 +80,7 @@ function roleLabel(acc: TestAccount): string {
 
 export default function Login() {
   const navigate = useNavigate();
-  const { login, resendVerificationEmail } = useAuth();
+  const { login, resendVerificationEmail, continueAsGuest } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -93,6 +94,17 @@ export default function Login() {
   const [accountsLoadWarning, setAccountsLoadWarning] = useState("");
   const [resendStatus, setResendStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [resendMessage, setResendMessage] = useState("");
+  // Kept out of `isLoading` so starting a guest session does not put the
+  // sign-in button into its "SIGNING IN..." state for a form nobody submitted.
+  const [isGuestLoading, setIsGuestLoading] = useState(false);
+  const [showGuestForm, setShowGuestForm] = useState(false);
+  const [guestName, setGuestName] = useState("");
+  const [guestPhone, setGuestPhone] = useState("");
+  const [guestError, setGuestError] = useState("");
+  // Set only when the last session on this device was a guest sign-out. A
+  // guest cannot sign back in, so this screen is the last chance to offer them
+  // an account instead of quietly letting their history go.
+  const [guestSignout, setGuestSignout] = useState<GuestSignoutNotice | null>(() => peekGuestSignout());
   const devModeHoldTimer = useRef<number | null>(null);
   const devModeHoldPointerOrigin = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const accountsLoadInFlight = useRef(false);
@@ -326,6 +338,9 @@ export default function Login() {
     setIsLoading(false);
     
     if (result.success) {
+      // Signing in answers the guest prompt. The storage flag is cleared by
+      // AuthContext when it sets the user; this drops the rendered copy too.
+      setGuestSignout(null);
       // Redirect immediately, then show welcome popup on destination page.
       //
       // Held in memory rather than sessionStorage: sessionStorage survives a page
@@ -349,6 +364,26 @@ export default function Login() {
     } else {
       setError(result.error || "Login failed");
     }
+  };
+
+  const handleContinueAsGuest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setGuestError("");
+    setIsGuestLoading(true);
+
+    const result = await continueAsGuest({ name: guestName, phone: guestPhone });
+
+    if (result.success) {
+      setGuestSignout(null);
+      // Guests come back to the customer hub, where both food and rides start.
+      armWelcomeGreeting(guestName.trim() || "Guest");
+      navigate('/redirect');
+      return;
+    }
+
+    // The button must not spin forever if the session came back a failure.
+    setIsGuestLoading(false);
+    setGuestError(result.error || "Could not start a guest session");
   };
 
   const handleResendVerification = async () => {
@@ -556,6 +591,39 @@ export default function Login() {
             </section>
           )}
 
+          {guestSignout && (
+            <section
+              aria-labelledby="guest-signout-title"
+              className="mb-6 rounded-xl border border-[var(--primary)]/30 bg-[var(--primary-soft)] p-4"
+            >
+              <h2 id="guest-signout-title" className="text-sm font-bold text-[var(--primary)]">
+                {guestSignout.name ? `${guestSignout.name}, get the full TrikeServe experience` : "Get the full TrikeServe experience"}
+              </h2>
+              <p className="mt-1 text-xs leading-relaxed text-[var(--ink)]/80">
+                You were ordering as a guest, and guest orders aren't saved to an account — they can't be
+                recovered after signing out. Create one so your next orders and rides are saved to you, your
+                addresses are remembered, and you can order from any device.
+              </p>
+              <div className="mt-3 flex items-center gap-2">
+                <Link to="/signup" onClick={() => clearGuestSignout()} className="flex-1">
+                  <Button className="w-full bg-[var(--primary)] hover:bg-[var(--primary)]">
+                    Create Account
+                  </Button>
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearGuestSignout();
+                    setGuestSignout(null);
+                  }}
+                  className="shrink-0 rounded-lg px-3 py-2 text-xs font-semibold text-[var(--primary)] underline underline-offset-2"
+                >
+                  Not now
+                </button>
+              </div>
+            </section>
+          )}
+
           <div className="mb-6">
             <h2 className="text-3xl font-bold text-[var(--ink)] mb-2">Welcome Back</h2>
             <p className="text-[var(--muted-foreground)]">Sign in to your TrikeServe account</p>
@@ -666,6 +734,96 @@ export default function Login() {
                 Create Account
               </Button>
             </Link>
+          </div>
+
+          <div className="mt-4">
+            {!showGuestForm ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setShowGuestForm(true);
+                  setGuestError("");
+                }}
+                disabled={isLoading || isGuestLoading}
+                className="w-full rounded-xl border border-dashed border-line px-4 py-3 text-sm font-semibold text-[var(--ink)] transition-colors hover:border-[var(--primary)] hover:text-[var(--primary)] disabled:opacity-50"
+              >
+                Continue as guest
+              </button>
+            ) : (
+              <form onSubmit={handleContinueAsGuest} className="space-y-3 rounded-xl border border-line bg-[var(--muted)] p-4">
+                <div>
+                  <h3 className="text-sm font-bold text-[var(--ink)]">Order or ride without an account</h3>
+                  <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+                    Your name and number are shared with your rider so they can find and call you.
+                  </p>
+                </div>
+
+                <div>
+                  <label htmlFor="guest-name" className="mb-1 block text-xs font-semibold text-[var(--ink)]">
+                    Your name
+                  </label>
+                  <Input
+                    id="guest-name"
+                    type="text"
+                    placeholder="Juan Dela Cruz"
+                    value={guestName}
+                    onChange={(e) => setGuestName(e.target.value)}
+                    className="border border-line focus:border-[var(--primary)] h-11"
+                    autoComplete="name"
+                    required
+                    disabled={isGuestLoading}
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="guest-phone" className="mb-1 block text-xs font-semibold text-[var(--ink)]">
+                    Phone number
+                  </label>
+                  <Input
+                    id="guest-phone"
+                    type="tel"
+                    inputMode="tel"
+                    placeholder="09XX XXX XXXX"
+                    value={guestPhone}
+                    onChange={(e) => setGuestPhone(e.target.value)}
+                    className="border border-line focus:border-[var(--primary)] h-11"
+                    autoComplete="tel"
+                    required
+                    disabled={isGuestLoading}
+                  />
+                </div>
+
+                {guestError && (
+                  <p role="alert" className="text-sm text-[var(--error)]">{guestError}</p>
+                )}
+
+                <div className="flex gap-2">
+                  <Button
+                    type="submit"
+                    className="flex-1 bg-[var(--primary)] hover:bg-[var(--primary)]"
+                    disabled={isGuestLoading}
+                  >
+                    {isGuestLoading ? "STARTING..." : "START AS GUEST"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="border border-line"
+                    onClick={() => {
+                      setShowGuestForm(false);
+                      setGuestError("");
+                    }}
+                    disabled={isGuestLoading}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+
+                <p className="text-[11px] text-[var(--muted-foreground)]">
+                  Guest orders stay on this device. Create an account to keep your history.
+                </p>
+              </form>
+            )}
           </div>
 
           <div className="mt-6 text-center">
