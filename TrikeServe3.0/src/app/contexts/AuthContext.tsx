@@ -3,6 +3,7 @@ import { supabase } from '../../utils/supabase';
 import { isDevModeEnabled, isDevModeFeatureEnabled, subscribeToDevModeChanges } from '../../lib/devMode';
 import { isSuperAdminEmail } from '../../lib/superAdminIdentity';
 import { rememberAuthReturnPath } from '../../lib/authReturnPath';
+import { clearGuestSignout, rememberGuestSignout } from '../../lib/guestSignoutNotice';
 
 export type UserRole = 'customer' | 'rider' | 'business' | 'admin';
 
@@ -15,6 +16,13 @@ export interface User {
   originalRole?: UserRole;
   phone: string;
   isVerified: boolean;
+  /**
+   * A guest session started with "Continue as guest": an anonymous Supabase
+   * auth user with a `users` row of its own. Orders and rides key off it
+   * exactly like a registered customer, but it has no email or password and
+   * lives only on this device until the person upgrades to a real account.
+   */
+  isGuest?: boolean;
   createdAt: string;
   adminType?: 'business_customer' | 'rider';
   /**
@@ -62,12 +70,33 @@ interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<LoginResult>;
+  continueAsGuest: (data: GuestSignupData) => Promise<LoginResult>;
+  upgradeGuestAccount: (data: GuestUpgradeData) => Promise<GuestUpgradeResult>;
   logout: () => void;
   signup: (data: SignupData) => Promise<{ success: boolean; error?: string; userId?: string }>;
   updateProfile: (data: Partial<User>) => Promise<{ success: boolean; error?: string }>;
   switchUiRole: (role: User['role']) => void;
   restoreOriginalRole: () => void;
   resendVerificationEmail: (email: string) => Promise<{ success: boolean; error?: string }>;
+}
+
+interface GuestSignupData {
+  /** Goes to the rider at handover and is written to `users.name`. */
+  name: string;
+  /** Required: the rider calls it, and it is `NOT NULL` in the users table. */
+  phone: string;
+}
+
+interface GuestUpgradeData {
+  email: string;
+  password: string;
+}
+
+interface GuestUpgradeResult {
+  success: boolean;
+  error?: string;
+  /** True when Supabase emailed a link the person still has to click. */
+  confirmationSent?: boolean;
 }
 
 interface SignupData {
@@ -118,6 +147,7 @@ function mapSupabaseUser(row: any): User {
     originalRole: row.original_role || role,
     phone: row.phone || '',
     isVerified: row.is_verified ?? defaultIsVerified(role),
+    isGuest: row.is_guest === true,
     createdAt: row.created_at || new Date().toISOString(),
     /*
      * A TODA's admin is one of its own drivers, so a driver row has no
@@ -145,6 +175,17 @@ function mapSupabaseUser(row: any): User {
     terminalName: row.terminal_name,
     avatarUrl: row.avatar_url,
   };
+}
+
+/**
+ * Guests have no email, but `users.email` is `UNIQUE NOT NULL` and several
+ * flows render it (checkout's `customer_email`, the business order list). A
+ * per-uid address satisfies the column without pretending to be a real inbox,
+ * and it can never collide with a signup because the domain is reserved.
+ */
+const GUEST_EMAIL_DOMAIN = 'guest.trikeserve.app';
+function guestEmailFor(userId: string): string {
+  return `guest+${userId}@${GUEST_EMAIL_DOMAIN}`;
 }
 
 const RESTAURANT_SETUP_PIN_PREFIX = 'restaurantSetupPin_';
@@ -492,6 +533,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return authTransitionGenerationRef.current;
   };
   const setCurrentUser = (nextUser: User | null) => {
+    // Any signed-in account answers the guest sign-out prompt, whichever screen
+    // signed it in. Cleared here so it cannot greet a much later sign-out.
+    if (nextUser && !nextUser.isGuest) clearGuestSignout();
     userIdRef.current = nextUser?.id ?? null;
     setUser(nextUser);
   };
@@ -1459,7 +1503,177 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  /**
+   * Starts a guest session: an anonymous Supabase auth user plus its own
+   * `users` row, so every policy that already keys off `auth.uid()` keeps
+   * working without loosening one. From here the guest is an ordinary
+   * customer — orders, rides, chat and notifications all see a real id — and
+   * the session stays on this device until they create a real account.
+   */
+  const continueAsGuest = async ({ name, phone }: GuestSignupData): Promise<LoginResult> => {
+    const guestName = name.trim();
+    const guestPhone = phone.trim();
+    if (!guestName) return { success: false, error: 'Please enter your name.' };
+    if (!guestPhone) {
+      return { success: false, error: 'Please enter a phone number so your rider can reach you.' };
+    }
+
+    // Any earlier prompt is answered by starting a session of either kind.
+    clearGuestSignout();
+
+    try {
+      const { data: authData, error: authError } = await supabase.auth.signInAnonymously();
+      if (authError) {
+        console.error('[AuthContext] Anonymous sign-in failed:', authError.message);
+        // The usual cause is the project setting rather than the app:
+        // Authentication -> Sign In / Providers -> Anonymous sign-ins is off, and
+        // Supabase refuses every call until it is switched on.
+        const disabled = /anonymous/i.test(authError.message) || authError.status === 422;
+        return {
+          success: false,
+          error: disabled
+            ? 'Guest mode is not available right now. Please sign in or create an account.'
+            : authError.message || 'Could not start a guest session.',
+        };
+      }
+
+      const guestId = authData.user?.id;
+      if (!guestId) {
+        return { success: false, error: 'Could not start a guest session. Please try again.' };
+      }
+
+      const now = new Date().toISOString();
+      const { data: profile, error: insertError } = await supabase
+        .from('users')
+        .insert([{
+          id: guestId,
+          email: guestEmailFor(guestId),
+          name: guestName,
+          phone: guestPhone,
+          role: 'customer',
+          original_role: 'customer',
+          // Only business and rider accounts are approval-gated; a guest is a
+          // customer from the first tap and must not land on "pending".
+          is_verified: true,
+          email_verified: false,
+          is_guest: true,
+          created_at: now,
+          updated_at: now,
+        }])
+        .select('*')
+        .single();
+
+      if (insertError || !profile) {
+        console.error('[AuthContext] Could not create the guest profile:', insertError);
+        // Dropping the anonymous session matters: leaving it behind signs the
+        // next visitor in as a guest with no profile, which reads as signed out
+        // on every screen and has no way back to the form.
+        await supabase.auth.signOut({ scope: 'local' }).catch(() => undefined);
+        return {
+          success: false,
+          error: insertError?.code === '42501'
+            ? 'Guest mode needs a one-time database update (see ADD_GUEST_MODE.sql).'
+            : 'Could not start a guest session. Please try again.',
+        };
+      }
+
+      const mappedUser = mapSupabaseUser(profile);
+      setCurrentUser(mappedUser);
+      localStorage.setItem('trikeserve_current_user', JSON.stringify(mappedUser));
+      signOutRequestedRef.current = false;
+      signOutRequestedGenerationRef.current = null;
+      return { success: true };
+    } catch (error) {
+      console.error('[AuthContext] Guest sign-in error:', error);
+      return { success: false, error: 'Could not start a guest session. Please try again.' };
+    }
+  };
+
+  /**
+   * Turns the current guest into a real account in place. `updateUser` attaches
+   * an email and password to the *same* auth user, so every order, ride and
+   * message keeps pointing at the same id. Signing up instead would create a
+   * second identity and strand the guest's history on the anonymous one.
+   */
+  const upgradeGuestAccount = async ({ email, password }: GuestUpgradeData): Promise<GuestUpgradeResult> => {
+    const guest = user;
+    if (!guest?.isGuest) return { success: false, error: 'This account is already registered.' };
+
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      return { success: false, error: 'Enter a valid email address.' };
+    }
+    if (password.length < 6) {
+      return { success: false, error: 'Use a password with at least 6 characters.' };
+    }
+
+    try {
+      // Same check signup makes, so the unique constraint surfaces as a message
+      // rather than as a failed write after the auth side already changed.
+      const { data: existing } = await supabase
+        .from('users')
+        .select('id')
+        .eq('email', normalizedEmail)
+        .maybeSingle();
+      if (existing && existing.id !== guest.id) {
+        return { success: false, error: 'Email already registered' };
+      }
+
+      // Same landing page as signup, so a confirmation link opened on a phone
+      // lands on the verification screen instead of the app root.
+      const WEB_APP_URL = import.meta.env.VITE_WEB_APP_URL || "https://trike-serve.vercel.app";
+      const { data, error } = await supabase.auth.updateUser(
+        { email: normalizedEmail, password },
+        { emailRedirectTo: `${WEB_APP_URL}/verify-email` },
+      );
+
+      if (error) {
+        console.error('[AuthContext] Guest upgrade failed:', error.message);
+        if (/already registered|already exists/i.test(error.message)) {
+          return { success: false, error: 'Email already registered' };
+        }
+        return { success: false, error: error.message || 'Could not register this account.' };
+      }
+
+      // Supabase tells us whether it emailed a confirmation link; when it did,
+      // the address is not proven yet and the row must not claim it is.
+      const confirmationSent = Boolean(data.user?.new_email || data.user?.email_change_sent_at);
+
+      const { error: profileError } = await supabase
+        .from('users')
+        .update({
+          email: normalizedEmail,
+          is_guest: false,
+          email_verified: !confirmationSent,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', guest.id);
+
+      if (profileError) {
+        console.error('[AuthContext] Guest profile upgrade failed:', profileError);
+        // The login details did change, so "nothing happened" would be a lie.
+        return {
+          success: false,
+          error: 'Your login was updated, but the profile could not be saved. Please try again.',
+        };
+      }
+
+      const upgradedUser: User = { ...guest, email: normalizedEmail, isGuest: false };
+      setCurrentUser(upgradedUser);
+      localStorage.setItem('trikeserve_current_user', JSON.stringify(upgradedUser));
+
+      return { success: true, confirmationSent };
+    } catch (error) {
+      console.error('[AuthContext] Guest upgrade error:', error);
+      return { success: false, error: 'Could not register this account. Please try again.' };
+    }
+  };
+
   const logout = async () => {
+    // A guest cannot sign back in — there is no email or password to do it
+    // with — so the login screen should be the one to offer a real account.
+    // Recorded before the user is cleared, because that is when it is known.
+    if (user?.isGuest) rememberGuestSignout(user.name);
     rememberAuthReturnPath(window.location.pathname, window.location.search, window.location.hash);
     const logoutGeneration = beginAuthTransition();
     signOutRequestedRef.current = true;
@@ -1762,7 +1976,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout, signup, updateProfile, switchUiRole, restoreOriginalRole, resendVerificationEmail }}>
+    <AuthContext.Provider value={{ user, isLoading, login, continueAsGuest, upgradeGuestAccount, logout, signup, updateProfile, switchUiRole, restoreOriginalRole, resendVerificationEmail }}>
       {children}
       {sessionWarningSeconds !== null && (
         <div className="fixed inset-0 z-[10050] grid place-items-center bg-black/55 px-4 backdrop-blur-sm" role="presentation">

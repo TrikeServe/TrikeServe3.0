@@ -4,6 +4,7 @@ import { useAuth, UserRole } from '../contexts/AuthContext';
 import { effectiveRole, ROLE_HOME } from '../../lib/roleAccess';
 import { rememberAuthReturnPath } from '../../lib/authReturnPath';
 import Login from './Login';
+import GuestRegisterPrompt from './customer/GuestRegisterPrompt';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -54,5 +55,12 @@ export default function ProtectedRoute({ children, allowedRoles }: ProtectedRout
     return <Navigate to={(role && ROLE_HOME[role]) || '/'} replace />;
   }
 
-  return <>{children}</>;
+  return (
+    <>
+      {/* Rendered for every customer route; it stays silent unless the signed-in
+          account is a guest, so a registered customer never sees it. */}
+      {role === 'customer' && <GuestRegisterPrompt />}
+      {children}
+    </>
+  );
 }
