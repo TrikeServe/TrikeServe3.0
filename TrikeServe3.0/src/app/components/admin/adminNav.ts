@@ -63,6 +63,7 @@ export function adminNavFor(user: AdminLikeUser): AdminNavItem[] {
     { path: "/admin/dashboard", label: "Overview", filipino: "Buod", Icon: LayoutDashboard },
     { path: "/admin/terminals", label: "Terminals", filipino: "Mga terminal", Icon: MapPin },
     { path: "/admin/users", label: "Drivers", filipino: "Mga driver", Icon: Users },
+    { path: "/admin/analytics", label: "Analytics", filipino: "Analitiks", Icon: BarChart3 },
     // What this admin has sent up for approval, and how it was answered.
     { path: "/admin/requests", label: "Submitted Requests", filipino: "Mga isinumiteng kahiling", Icon: Send },
     { path: "/admin/settings", label: "Settings", filipino: "Mga setting", Icon: Settings },

@@ -457,6 +457,41 @@ export default function ActiveRide() {
   const { sync: syncRideResume } = useRideResume();
 
   const [rideData, setRideData] = useState<ActiveRideData | null>(null);
+  /*
+   * Cash the rider collects at the door for a cash-on-delivery food order.
+   *
+   * The delivery request only carries the delivery fee as `amount`, because that
+   * is the rider's earning. The food money belongs to the shop, so it is read
+   * from the order instead of being folded into the fare -- doing that would have
+   * counted the whole bill as rider earnings.
+   */
+  const [codCollectAmount, setCodCollectAmount] = useState<number | null>(null);
+
+  useEffect(() => {
+    const orderId = rideData?.orderId ?? null;
+    if (!orderId) {
+      setCodCollectAmount(null);
+      return;
+    }
+    let active = true;
+    (async () => {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('payment_method, subtotal, total, delivery_fee')
+        .eq('id', orderId)
+        .maybeSingle();
+      if (!active) return;
+      if (error || !data || String(data.payment_method || '').toLowerCase() !== 'cod') {
+        setCodCollectAmount(null);
+        return;
+      }
+      const food = Number(data.subtotal)
+        || Math.max((Number(data.total) || 0) - (Number(data.delivery_fee) || 0), 0);
+      const fee = Number(data.delivery_fee) || 0;
+      setCodCollectAmount(food + fee);
+    })();
+    return () => { active = false; };
+  }, [rideData?.orderId]);
   const [pickupTerminalMarkerColor, setPickupTerminalMarkerColor] = useState(DEFAULT_TERMINAL_COLOR);
   const [pickupTerminalLocation, setPickupTerminalLocation] = useState<{ id: string; position: RideCoordinate | null } | null>(null);
   const [isMinimized, setIsMinimized] = useState(false);
@@ -2011,15 +2046,19 @@ export default function ActiveRide() {
     writeRiderActiveRide(updated);
     const dbMap: Record<RideStatus, string> = { 'on-the-way': 'on-the-way', 'arrived': 'arrived', 'pickup': 'picked-up', 'drop-off': 'dropped-off', 'payment': 'awaiting-payment' };
     const deliveryFeeAmount = Number(rideData.amount);
-    const deliveryArrivalMessage = Number.isFinite(deliveryFeeAmount)
-      ? `I've arrived at your delivery address. Please prepare ₱${deliveryFeeAmount.toFixed(2)} in cash for the delivery fee.`
-      : "I've arrived at your delivery address. Please prepare the delivery fee in cash.";
+    const deliveryArrivalMessage = codCollectAmount !== null
+      ? `I've arrived at your delivery address. Please prepare ₱${codCollectAmount.toFixed(2)} in cash for the order and delivery fee.`
+      : Number.isFinite(deliveryFeeAmount)
+        ? `I've arrived at your delivery address. Please prepare ₱${deliveryFeeAmount.toFixed(2)} in cash for the delivery fee.`
+        : "I've arrived at your delivery address. Please prepare the delivery fee in cash.";
     const messageMap: Record<RideStatus, string> = {
       'on-the-way': 'Driver is on the way!',
       'arrived': 'Driver has arrived!',
       'pickup': isDeliveryRide(rideData) ? 'Driver picked up the order!' : 'Passengers picked up!',
       'drop-off': isDeliveryRide(rideData) ? deliveryArrivalMessage : 'Arrived at drop-off!',
-      'payment': 'Please complete the payment.',
+      'payment': codCollectAmount !== null
+        ? `Collect ₱${codCollectAmount.toFixed(2)} in cash from the customer.`
+        : 'Please complete the payment.',
     };
     const waitsForPassengerDropoff = Boolean(
       newStatus === 'drop-off' && isSharedRide && rideData.passengerDetails?.length,
@@ -2145,6 +2184,15 @@ export default function ActiveRide() {
     if (!rideData || isCompleting.current) return;
     isCompleting.current = true;
     try {
+    // Cash changes hands before the delivery is done, so it is recorded here.
+    // A failure is logged rather than blocking completion: the food has already
+    // been handed over and the rider cannot un-deliver it.
+    if (rideData.orderId && codCollectAmount !== null) {
+      const collected = await supabaseHelpers.recordOrderCashCollected(rideData.orderId, user?.id);
+      if (!collected.success) {
+        console.error('[ActiveRide] Could not record the cash collection:', collected.error);
+      }
+    }
 
     if (rideData.orderId || rideData.orderNumber) {
       const { error: orderStatusError } = await supabaseHelpers.updateDeliveryOrderStatus(
@@ -2793,7 +2841,12 @@ export default function ActiveRide() {
       case 'drop-off':
         if (isDeliveryRide(rideData)) {
           return {
-            label: 'Complete delivery',
+            // The cash is part of this handover, so the button says so. A rider
+            // who completes first and remembers the money afterwards has no
+            // screen left to record it on.
+            label: codCollectAmount !== null
+              ? `Collect ₱${codCollectAmount.toFixed(2)} & complete`
+              : 'Complete delivery',
             onClick: startDeliveryCompletion,
             isComplete: true,
           };
@@ -3931,6 +3984,13 @@ export default function ActiveRide() {
               onSelect={handleProofSelected}
               onClear={handleProofCleared}
             />
+
+            {codCollectAmount !== null && (
+              <p className="mt-4 rounded-xl bg-[var(--amber-soft)] px-3 py-2.5 text-xs font-semibold text-[var(--amber-ink)]">
+                Collect ₱{codCollectAmount.toFixed(2)} in cash before completing — the
+                food and the delivery fee are both paid to you.
+              </p>
+            )}
 
             <div className="mt-4 flex gap-2">
               <Button

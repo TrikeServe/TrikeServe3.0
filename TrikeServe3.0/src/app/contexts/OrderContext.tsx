@@ -48,8 +48,11 @@ export interface Order {
    */
   status: "pending" | "payment-confirmed" | "preparing" | "on-the-way" | "delivered" | "cancelled";
   deliveryMode: "delivery" | "pickup";
-  /** GCash only. The delivery fee is cash, collected by the rider. */
-  paymentMethod: "gcash";
+  /**
+   * GCash prepaid, or cash on delivery. Either way the delivery fee is cash,
+   * collected by the rider -- on a cash order it is part of the same payment.
+   */
+  paymentMethod: "gcash" | "cod";
   address: string;
   date: string;
   createdAt: string; // ISO timestamp

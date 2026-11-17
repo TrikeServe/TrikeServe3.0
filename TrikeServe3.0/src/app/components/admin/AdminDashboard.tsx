@@ -15,6 +15,7 @@ import ConfirmationModal from "../ui/confirmation-modal";
 import Toast from "../ui/Toast";
 import SuperAdminOverview from "./SuperAdminOverview";
 import OnlineDriversForTerminal from "./OnlineDriversForTerminal";
+import AdminAnalytics from "./AdminAnalytics";
 import { Link } from "react-router";
 import AdminPageIntro, { AdminMetricCards } from "./AdminPageIntro";
 import { ArrowUpRight, Clock, MapPin, Send } from "lucide-react";
@@ -504,6 +505,11 @@ export default function AdminDashboard() {
             { label: 'Verified drivers', value: activeUsers.filter(account => account.type === 'rider').length, detail: 'Verified by the Super Admin', Icon: CheckCircle, tone: 'success' },
             { label: 'Awaiting verification', value: pendingVerifications.length, detail: 'Account reviews · not change requests', Icon: Clock, tone: 'amber' },
           ]} />
+          <AdminAnalytics
+            terminalId={user?.terminalId ?? null}
+            terminalName={user?.terminalName}
+            refreshToken={analyticsRefresh}
+          />
           <OnlineDriversForTerminal
             terminalId={user?.terminalId ?? null}
             terminalName={user?.terminalName}

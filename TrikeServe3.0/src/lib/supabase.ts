@@ -3371,6 +3371,13 @@ export const supabaseHelpers = {
         message: 'The shop has received your GCash payment and is preparing your order.',
         emoji: '\uD83D\uDD18',
       },
+      // COD never reaches `payment-confirmed`: there is no transfer to verify,
+      // so the shop accepts the order and the money is collected at the door.
+      'cod-accepted': {
+        title: 'Order accepted',
+        message: 'The shop accepted your order. Prepare the cash payment for the rider on delivery.',
+        emoji: '\uD83D\uDCB5',
+      },
       'driver-requested': {
         title: 'Driver requested',
         message: 'The restaurant has prepared your food order and requested a driver.',
@@ -3410,6 +3417,7 @@ export const supabaseHelpers = {
 
     const chatMessages: Record<string, string> = {
       'payment-confirmed': "We've received your GCash payment and we're preparing your order.",
+      'cod-accepted': "We've accepted your order. Please prepare the cash payment for the rider on delivery.",
       'driver-requested': "We've prepared your food order and requested a driver.",
       confirmed: "We've confirmed your order and we're preparing it.",
       preparing: "We're preparing your order.",
@@ -4807,6 +4815,40 @@ export const supabaseHelpers = {
     } catch (error) {
       console.error('[confirmOrderPayment] error:', error);
       return { success: false, error: 'Network error while confirming the payment' };
+    }
+  },
+
+  /**
+   * Rider: record that the cash for a COD order was collected at the door.
+   *
+   * This is the only audit fact a cash order produces, so it is guarded like the
+   * GCash confirmation is: the update only matches an order that is still COD and
+   * has no collection recorded yet. A retry after a dropped response therefore
+   * cannot overwrite who actually collected the money.
+   */
+  async recordOrderCashCollected(
+    orderId: string,
+    riderId?: string | null,
+  ): Promise<{ success: boolean; error?: string }> {
+    if (!orderId) return { success: false, error: 'Missing order id' };
+    try {
+      const { error } = await supabase
+        .from('orders')
+        .update({
+          cash_collected_at: new Date().toISOString(),
+          cash_collected_by: riderId || null,
+        })
+        .eq('id', orderId)
+        .eq('payment_method', 'cod')
+        .is('cash_collected_at', null);
+
+      if (error) return { success: false, error: error.message };
+      // Nothing to report when no row matched: either the order is not COD or the
+      // cash was already recorded, and both are the desired end state.
+      return { success: true };
+    } catch (error) {
+      console.error('[recordOrderCashCollected] error:', error);
+      return { success: false, error: 'Network error while recording the cash collection' };
     }
   },
 

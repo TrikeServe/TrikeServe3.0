@@ -418,7 +418,8 @@ interface ShareRideLobbyProps {
   passengerCount?: number;
   maxPassengersAllowed?: number;
   pricePerSeat?: number;
-  paymentMethod?: 'COD';
+  /** Cash to the driver, or GCash recorded as prepaid and not collected en route. */
+  paymentMethod?: 'COD' | 'GCASH';
   selectedTerminalId?: string | null;
   terminalCoords?: { lat: number; lng: number } | null;
   selectedRouteId?: string | null;
