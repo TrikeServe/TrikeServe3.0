@@ -176,9 +176,8 @@ CREATE TABLE IF NOT EXISTS orders (
   delivery_fee DECIMAL(10, 2) NOT NULL,
   total DECIMAL(10, 2) NOT NULL,
   status VARCHAR(50) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'payment-confirmed', 'confirmed', 'preparing', 'ready', 'picked_up', 'on-the-way', 'delivered', 'cancelled')),
-  -- GCash proof for the food. The delivery fee is collected in cash by the
-  -- rider instead, which is why the two halves of the bill are stored apart:
-  -- a single total cannot say which part has been paid yet.
+  -- The GCash transfer covers the full total; the restaurant pays the driver
+  -- the delivery fee. COD orders instead have the rider collect the full total.
   -- See ADD_ORDER_PAYMENT_AND_DELIVERY_PROOF.sql.
   payment_proof_url TEXT,
   payment_proof_uploaded_at TIMESTAMPTZ,

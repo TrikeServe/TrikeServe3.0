@@ -11,6 +11,7 @@ import {
   ReceiptText,
   Settings,
   ShoppingCart,
+  UserRound,
   UserCircle,
   Users,
   UtensilsCrossed,
@@ -19,6 +20,7 @@ import {
 
 import { TerminalIconGlyph } from "./TerminalIcon";
 import { useCartOptional } from "@/app/contexts/CartContext";
+import { useAuth } from "@/app/contexts/AuthContext";
 
 type BottomNavVariant = "customer" | "rider" | "business" | "admin";
 
@@ -77,6 +79,8 @@ export default function BottomNav({
   className = "",
 }: BottomNavProps) {
   const cart = useCartOptional();
+  const { user } = useAuth();
+  const showGuestMode = variant === "customer" && user?.isGuest === true;
   const accent = ACCENTS[variant];
   const inactive = "var(--muted-foreground)";
   const cartCount = variant === "customer" ? cart?.getTotalItems() ?? 0 : 0;
@@ -230,51 +234,62 @@ export default function BottomNav({
   const visibleItems = items;
 
   return (
-    <nav
-      aria-label="Main navigation"
-      className={`fixed bottom-0 left-0 right-0 z-[1500] border-t border-line bg-surface ${className}`}
-      style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
-    >
-      <div
-        className={`mx-auto grid w-full max-w-3xl gap-1 px-2 pt-2 sm:px-4 ${
-          visibleItems.length === 3 ? "grid-cols-3" : visibleItems.length === 4 ? "grid-cols-4" : "grid-cols-5"
-        }`}
+    <>
+      {showGuestMode && (
+        <span
+          className="pointer-events-none fixed left-1/2 z-[1501] inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-[var(--primary)]/20 bg-[var(--primary-soft)] px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--primary)]"
+          style={{ bottom: "calc(max(0.5rem, env(safe-area-inset-bottom)) + 5rem)" }}
+        >
+          <UserRound className="size-3.5" aria-hidden="true" />
+          Guest Mode
+        </span>
+      )}
+      <nav
+        aria-label="Main navigation"
+        className={`fixed bottom-0 left-0 right-0 z-[1500] border-t border-line bg-surface ${className}`}
+        style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
       >
-        {visibleItems.map((item) => {
-          const isActive = active === item.key;
-          const color = isActive ? accent : inactive;
-          const Icon = item.icon;
-          const count = item.badge ?? badges?.[item.key] ?? 0;
+        <div
+          className={`mx-auto grid w-full max-w-3xl gap-1 px-2 pt-2 sm:px-4 ${
+            visibleItems.length === 3 ? "grid-cols-3" : visibleItems.length === 4 ? "grid-cols-4" : "grid-cols-5"
+          }`}
+        >
+          {visibleItems.map((item) => {
+            const isActive = active === item.key;
+            const color = isActive ? accent : inactive;
+            const Icon = item.icon;
+            const count = item.badge ?? badges?.[item.key] ?? 0;
 
-          return (
-            <Link
-              key={item.key}
-              to={item.to}
-              state={variant === "customer" && item.key === "home" ? { customerHomeTab: true } : undefined}
-              aria-current={isActive ? "page" : undefined}
-              className="relative flex min-h-14 min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl py-1.5 text-center transition-colors hover:bg-soft"
-            >
-              <Icon className="h-5 w-5 shrink-0 sm:h-6 sm:w-6" color={color} />
-              <span
-                className={`w-full truncate text-[11px] leading-tight sm:text-xs ${
-                  isActive ? "font-semibold" : ""
-                }`}
-                style={{ color }}
+            return (
+              <Link
+                key={item.key}
+                to={item.to}
+                state={variant === "customer" && item.key === "home" ? { customerHomeTab: true } : undefined}
+                aria-current={isActive ? "page" : undefined}
+                className="relative flex min-h-14 min-w-0 flex-col items-center justify-center gap-0.5 rounded-xl py-1.5 text-center transition-colors hover:bg-soft"
               >
-                {item.label}
-              </span>
-
-              {count > 0 ? (
-                <span className="absolute right-[22%] top-0 grid min-w-5 place-items-center rounded-full border-2 border-surface bg-primary px-1 text-[10px] font-bold leading-none text-[var(--primary-foreground)]">
-                  <span className="py-1">
-                    {count > 99 ? "99+" : count}
-                  </span>
+                <Icon className="h-5 w-5 shrink-0 sm:h-6 sm:w-6" color={color} />
+                <span
+                  className={`w-full truncate text-[11px] leading-tight sm:text-xs ${
+                    isActive ? "font-semibold" : ""
+                  }`}
+                  style={{ color }}
+                >
+                  {item.label}
                 </span>
-              ) : null}
-            </Link>
-          );
-        })}
-      </div>
-    </nav>
+
+                {count > 0 ? (
+                  <span className="absolute right-[22%] top-0 grid min-w-5 place-items-center rounded-full border-2 border-surface bg-primary px-1 text-[10px] font-bold leading-none text-[var(--primary-foreground)]">
+                    <span className="py-1">
+                      {count > 99 ? "99+" : count}
+                    </span>
+                  </span>
+                ) : null}
+              </Link>
+            );
+          })}
+        </div>
+      </nav>
+    </>
   );
 }

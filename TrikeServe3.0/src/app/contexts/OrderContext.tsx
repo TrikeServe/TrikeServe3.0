@@ -49,8 +49,8 @@ export interface Order {
   status: "pending" | "payment-confirmed" | "preparing" | "on-the-way" | "delivered" | "cancelled";
   deliveryMode: "delivery" | "pickup";
   /**
-   * GCash prepaid, or cash on delivery. Either way the delivery fee is cash,
-   * collected by the rider -- on a cash order it is part of the same payment.
+   * GCash for the full order total (the restaurant pays the driver fee), or
+   * cash on delivery (the rider collects the full total from the customer).
    */
   paymentMethod: "gcash" | "cod";
   address: string;

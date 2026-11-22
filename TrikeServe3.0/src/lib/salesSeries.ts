@@ -117,12 +117,10 @@ export function isCancelled(order: Record<string, any>): boolean {
 /**
  * Revenue: what the shop is actually paid.
  *
- * The delivery fee is not part of it. Checkout takes the food by GCash
- * (`gcash_amount` is the subtotal) and the rider collects the fee in cash at
- * handover, so it passes straight through to the rider and never lands in the
- * shop's account. Summing the whole bill would report money the business does not
- * have, and a shop comparing that figure against what actually arrived would
- * think it had been shorted every week.
+ * The delivery fee is not part of net food sales. A GCash customer transfers
+ * the full order total to the shop, which passes the delivery fee through to the
+ * driver. Summing the full bill as revenue would count money the business owes
+ * the driver as income.
  *
  * The fallback is for rows written before `subtotal` was stored: the bill is the
  * food plus the delivery, so the food is whatever is left once the fee is off.

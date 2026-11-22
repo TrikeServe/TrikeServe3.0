@@ -206,6 +206,10 @@ export default function OrderDetail() {
   const [order, setOrder] = useState<OrderData | null>(null);
   const orderRef = useRef<OrderData | null>(null);
   orderRef.current = order;
+  const isFullOrderGcashTransfer = Boolean(
+    order?.paymentMethod === 'gcash' &&
+    Number(order.gcashAmount ?? order.subtotal) >= Number(order.total) - 0.01,
+  );
   const [restaurantProfile, setRestaurantProfile] = useState<OrderRestaurantProfile | null>(null);
   const [incomingOrderChat, setIncomingOrderChat] = useState<{
     conversationId: string;
@@ -1372,16 +1376,14 @@ export default function OrderDetail() {
           <div className="flex flex-wrap items-center gap-2 mb-4">
             {order.paymentMethod === 'gcash' ? (
               <Badge className="bg-[var(--success)] text-white text-xs">
-                Food: GCash
+                {isFullOrderGcashTransfer ? 'Full total by GCash' : 'Food: GCash'}
               </Badge>
             ) : (
               <Badge className="bg-[var(--amber)] text-white text-xs">
                 Food: cash on delivery
               </Badge>
             )}
-            {/* The rider collects this part at the door, so it stays unpaid for
-                most of the order's life. Showing one badge for the whole order
-                made a fully paid order look identical to an unpaid one. */}
+            {/* The restaurant passes the delivery fee through to the driver. */}
             <Badge
               variant="outline"
               className={
@@ -1391,7 +1393,7 @@ export default function OrderDetail() {
               }
             >
               {order.paymentMethod === 'gcash'
-                ? order.status === 'delivered' ? 'Delivery fee: paid' : 'Delivery fee: cash to rider'
+                ? isFullOrderGcashTransfer ? 'Restaurant pays driver fee' : order.status === 'delivered' ? 'Delivery fee: paid' : 'Delivery fee: cash to rider'
                 : order.cashCollectedAt || order.status === 'delivered'
                   ? 'Cash: collected by rider'
                   : `Cash to rider: ₱${order.total.toFixed(2)}`}
@@ -1421,23 +1423,25 @@ export default function OrderDetail() {
           {order.status === 'pending' && !order.paymentConfirmedAt && (
             <p className="mb-3 text-xs text-[var(--muted-foreground)]">
               {order.paymentMethod === 'gcash'
-                ? 'Waiting for the shop to confirm your GCash payment.'
+                ? isFullOrderGcashTransfer
+                  ? 'Waiting for the shop to confirm your full GCash payment.'
+                  : 'Waiting for the shop to confirm your GCash payment.'
                 : `Waiting for the shop to accept your order. Pay ₱${order.total.toFixed(2)} in cash to the rider on delivery.`}
             </p>
           )}
 
           <div className="space-y-2 pt-3 border-t-2 border-[var(--muted)]">
             <div className="flex justify-between text-sm text-[var(--muted-foreground)]">
-              <span>{order.paymentMethod === 'gcash' ? 'Food subtotal (GCash)' : 'Food subtotal (cash)'}</span>
+              <span>{order.paymentMethod === 'gcash' ? 'Food subtotal' : 'Food subtotal (cash)'}</span>
               <span>₱{order.subtotal.toFixed(2)}</span>
             </div>
             <div className="flex justify-between text-sm text-[var(--muted-foreground)]">
-              <span>Delivery fee (cash to rider)</span>
+              <span>{order.paymentMethod === 'gcash'
+                ? isFullOrderGcashTransfer ? 'Delivery fee (restaurant pays driver)' : 'Delivery fee (cash to rider)'
+                : 'Delivery fee (cash to rider)'}</span>
               <span>₱{order.deliveryFee.toFixed(2)}</span>
             </div>
-            {/* The split restated on the total, because the total is one number
-                and the payment is not: this is where the two are made explicit
-                on the order the customer keeps. */}
+            {/* Show the full GCash transfer or the total due to the rider. */}
             <div className="flex justify-between text-xs text-[var(--muted-foreground)] pt-1">
               <span>
                 {order.paymentMethod === 'gcash'

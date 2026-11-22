@@ -2048,6 +2048,8 @@ export default function ActiveRide() {
     const deliveryFeeAmount = Number(rideData.amount);
     const deliveryArrivalMessage = codCollectAmount !== null
       ? `I've arrived at your delivery address. Please prepare ₱${codCollectAmount.toFixed(2)} in cash for the order and delivery fee.`
+      : isDeliveryRide(rideData) && rideData.payment === 'PREPAID'
+        ? 'Your full order total was paid through GCash. No payment is due at drop-off.'
       : Number.isFinite(deliveryFeeAmount)
         ? `I've arrived at your delivery address. Please prepare ₱${deliveryFeeAmount.toFixed(2)} in cash for the delivery fee.`
         : "I've arrived at your delivery address. Please prepare the delivery fee in cash.";
@@ -2058,7 +2060,9 @@ export default function ActiveRide() {
       'drop-off': isDeliveryRide(rideData) ? deliveryArrivalMessage : 'Arrived at drop-off!',
       'payment': codCollectAmount !== null
         ? `Collect ₱${codCollectAmount.toFixed(2)} in cash from the customer.`
-        : 'Please complete the payment.',
+        : isDeliveryRide(rideData) && rideData.payment === 'PREPAID'
+          ? 'The full order was paid by GCash. No cash is due from the customer.'
+          : 'Please complete the payment.',
     };
     const waitsForPassengerDropoff = Boolean(
       newStatus === 'drop-off' && isSharedRide && rideData.passengerDetails?.length,
@@ -3013,7 +3017,9 @@ export default function ActiveRide() {
                   Payment for {paymentPassengerName || 'passenger'}
                 </h2>
                 <p className="mt-1 text-sm leading-5 text-[var(--muted-foreground)]">
-                  {rideData.payment === 'PREPAID'
+                  {isDeliveryRide(rideData) && rideData.payment === 'PREPAID'
+                    ? 'The customer paid the full order total by GCash. The restaurant pays your delivery fee; no payment is due from the customer.'
+                    : rideData.payment === 'PREPAID'
                     ? isSharedRide
                       ? 'This passenger’s fare was prepaid. Continue the ride after confirming the drop-off.'
                       : 'This ride was prepaid. Confirm completion after the passenger reaches their drop-off.'
@@ -3036,12 +3042,18 @@ export default function ActiveRide() {
             </div>
             <div className="mb-4 space-y-3 rounded-xl bg-[var(--muted)] p-4 text-left">
               <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-[var(--muted-foreground)]">{isSharedRide ? 'Passenger fare' : 'Total fare'}</span>
+                <span className="text-sm text-[var(--muted-foreground)]">
+                  {isSharedRide ? 'Passenger fare' : isDeliveryRide(rideData) ? 'Delivery fee' : 'Total fare'}
+                </span>
                 <strong className="text-lg text-[var(--primary)]">₱{(isSharedRide ? sharedPaymentPassengerFare : Number(rideData.amount || 0)).toFixed(2)}</strong>
               </div>
               <div className="flex items-center justify-between gap-3 border-t border-[var(--border)] pt-3">
                 <span className="text-sm text-[var(--muted-foreground)]">Payment method</span>
-                <strong className="text-sm text-[var(--ink)]">{rideData.payment === 'PREPAID' ? 'Prepaid' : 'Cash'}</strong>
+                <strong className="text-sm text-[var(--ink)]">
+                  {isDeliveryRide(rideData)
+                    ? rideData.payment === 'PREPAID' ? 'Restaurant pays' : 'Cash from customer'
+                    : rideData.payment === 'PREPAID' ? 'Prepaid' : 'Cash'}
+                </strong>
               </div>
             </div>
             {sharedPaymentError && (
@@ -3062,7 +3074,9 @@ export default function ActiveRide() {
                 ? isFinalSharedPassengerPayment
                   ? 'Complete Ride'
                   : rideData.payment === 'PREPAID' ? 'Continue route' : 'Payment received'
-                : rideData.payment === 'PREPAID' ? 'Complete ride' : 'Payment received'}
+                : isDeliveryRide(rideData) && rideData.payment === 'PREPAID'
+                  ? 'Complete delivery'
+                  : rideData.payment === 'PREPAID' ? 'Complete ride' : 'Payment received'}
             </Button>
         </RideModal>
       )}
@@ -3608,7 +3622,11 @@ export default function ActiveRide() {
                       {isDeliveryRide(rideData) && (
                         <span className="text-[10px] font-semibold text-[var(--muted-foreground)]">Delivery Fee</span>
                       )}
-                      <Badge variant="outline" className="text-[var(--muted-foreground)]">{rideData.payment === 'COD' ? 'Cash' : 'Prepaid'}</Badge>
+                      <Badge variant="outline" className="text-[var(--muted-foreground)]">
+                        {isDeliveryRide(rideData)
+                          ? rideData.payment === 'COD' ? 'Cash from customer' : 'Restaurant pays driver'
+                          : rideData.payment === 'COD' ? 'Cash' : 'Prepaid'}
+                      </Badge>
                     </div>
                   )}
                 </div>

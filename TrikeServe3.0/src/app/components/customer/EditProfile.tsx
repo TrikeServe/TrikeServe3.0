@@ -23,6 +23,7 @@ import { getProfileInitials } from "@/lib/profileInitials";
  */
 export default function EditProfile() {
   const { user, updateProfile } = useAuth();
+  const isGuest = user?.isGuest === true;
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [name, setName] = useState(user?.name ?? "");
@@ -65,7 +66,7 @@ export default function EditProfile() {
   const initialName = useRef(user?.name ?? "");
   const initialPhone = useRef(user?.phone ?? "");
 
-  const hasUnsavedChanges = name !== initialName.current || phone !== initialPhone.current;
+  const hasUnsavedChanges = name !== initialName.current || (!isGuest && phone !== initialPhone.current);
 
   // Blocks in-app navigation only. A reload or tab close is the browser's own
   // prompt, registered below — the two cover different exits.
@@ -167,7 +168,9 @@ export default function EditProfile() {
     setSaving(true);
     setError(null);
     try {
-      const result = await updateProfile({ name: name.trim(), phone: phone.trim() });
+      const result = await updateProfile(
+        isGuest ? { name: name.trim() } : { name: name.trim(), phone: phone.trim() },
+      );
       if (!result.success) {
         setError(result.error ?? "Could not save your details. Please try again.");
         return;
@@ -288,29 +291,32 @@ export default function EditProfile() {
             />
           </div>
 
-          <div>
-            <label
-              htmlFor="edit-phone"
-              className="mb-2 block text-xs font-medium tracking-wider text-[var(--muted-foreground)]"
-            >
-              Mobile number
-            </label>
-            <input
-              id="edit-phone"
-              type="tel"
-              value={phone}
-              onChange={(e) => {
-                setPhone(e.target.value);
-                setSaved(false);
-              }}
-              placeholder="09XX XXX XXXX"
-              className="min-h-12 w-full rounded-xl border border-line bg-[var(--surface)] px-4 text-base text-[var(--ink)] outline-none focus:border-[var(--primary)]"
-            />
-          </div>
+          {!isGuest && (
+            <div>
+              <label
+                htmlFor="edit-phone"
+                className="mb-2 block text-xs font-medium tracking-wider text-[var(--muted-foreground)]"
+              >
+                Mobile number
+              </label>
+              <input
+                id="edit-phone"
+                type="tel"
+                value={phone}
+                onChange={(e) => {
+                  setPhone(e.target.value);
+                  setSaved(false);
+                }}
+                placeholder="09XX XXX XXXX"
+                className="min-h-12 w-full rounded-xl border border-line bg-[var(--surface)] px-4 text-base text-[var(--ink)] outline-none focus:border-[var(--primary)]"
+              />
+            </div>
+          )}
 
           <p className="mt-4 text-xs leading-relaxed text-[var(--muted-foreground)]">
-            Your email cannot be changed here — it is how you sign in and how we
-            reach you about your account.
+            {isGuest
+              ? 'Guest profiles can update their name and photo. Register to add contact and sign-in details.'
+              : 'Your email cannot be changed here — it is how you sign in and how we reach you about your account.'}
           </p>
         </section>
 
@@ -322,7 +328,7 @@ export default function EditProfile() {
           was never going to store either way. The same reasoning that keeps the
           photo out of `hasUnsavedChanges`.
         */}
-        <ChangePasswordSection />
+        {!isGuest && <ChangePasswordSection />}
 
         {error && (
           <p role="alert" className="text-sm font-semibold text-[var(--error)]">

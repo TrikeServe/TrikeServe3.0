@@ -2,8 +2,8 @@
 --
 -- Why this file exists
 -- --------------------
--- Checkout is GCash-only for the food, with the delivery fee collected in cash by
--- the rider. Two things were missing for that to work:
+-- Customers transfer the full order total through GCash to the restaurant, which
+-- pays the delivery fee to the driver. Two records were missing for that flow:
 --
 --   1. Somewhere to put the customer's screenshot of the GCash transfer, and a
 --      status meaning "the shop has looked at it and the money is there".
@@ -32,11 +32,10 @@
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_proof_url TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_proof_uploaded_at TIMESTAMPTZ;
 
--- The two halves of the bill, stored apart because they are paid in two
--- different ways: the food by GCash before the order is accepted, the delivery
--- fee in cash at the door. A single `total` cannot say which is which, and the
--- shop cannot reconcile a transfer against a total that includes cash nobody
--- has handed over yet.
+-- Payment amounts recorded for reconciliation: `gcash_amount` is the amount
+-- the customer transferred (the full total for GCash orders); `delivery_fee_cash`
+-- is the delivery fee collected from the customer in cash on COD orders. GCash
+-- delivery fees are paid to the driver by the restaurant.
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS gcash_amount NUMERIC(10, 2);
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_fee_cash NUMERIC(10, 2);
 

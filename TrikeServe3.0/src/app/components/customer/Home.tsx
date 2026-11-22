@@ -56,6 +56,7 @@ import {
   getShortestAvoidHighwaysRoadRouteDetails,
 } from "@/lib/roadRouting";
 import { consumeWelcomeGreeting } from "../../../lib/welcomeGreeting";
+import { requestGuestRegisterForm } from "../../../lib/guestOnboarding";
 
 // Get Google Maps API Key from environment variable
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
@@ -450,15 +451,14 @@ export default function CustomerHome() {
   const [placesSessionToken, setPlacesSessionToken] = useState<string>(() => createPlacesSessionToken());
   const [locationPreview, setLocationPreview] = useState<GeocodedLocation | null>(null);
   const [showBookingConfirm, setShowBookingConfirm] = useState(false);
+  const [showGuestCashRestriction, setShowGuestCashRestriction] = useState(false);
+  const guestCashDialogRef = useRef<HTMLDivElement>(null);
   const [showSharedRides, setShowSharedRides] = useState(false);
   const [showShareLobby, setShowShareLobby] = useState(false);
   const [shareLobbyInitialId, setShareLobbyInitialId] = useState<string | undefined>();
-  /*
-   * How the ride is paid. Cash stays the default, and GCash is recorded as
-   * prepaid -- the rider is told not to collect at the door. The delivery leg of
-   * a food order uses its own payment method and is unaffected by this choice.
-   */
-  const [paymentMethod, setPaymentMethod] = useState<'COD' | 'GCASH'>('COD');
+  // Ride fares are paid in cash to the driver. Food orders use their own
+  // separate payment method.
+  const paymentMethod = 'COD' as const;
   const [activeRide, setActiveRide] = useState<any>(null);
   const [rideStatus, setRideStatus] = useState<'searching' | 'driver-found' | 'picking-up' | 'in-transit' | null>(null);
    // When the current driver search began, so the "Finding a Driver" screen can show
@@ -466,6 +466,10 @@ export default function CustomerHome() {
    // mid-search restarted the count at zero and understated how long the customer
    // had already been waiting.
    const [requestedAt, setRequestedAt] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (showGuestCashRestriction) guestCashDialogRef.current?.focus();
+  }, [showGuestCashRestriction]);
 
   useEffect(() => {
     // The greeting belongs to the customer service hub, where Book a Ride and
@@ -3344,6 +3348,10 @@ export default function CustomerHome() {
       setShowPassengerCount(false);
       return;
     }
+    if (user?.isGuest) {
+      setShowGuestCashRestriction(true);
+      return;
+    }
     setShowBookingConfirm(false);
     
     // For share rides, open the lobby system
@@ -3422,7 +3430,7 @@ export default function CustomerHome() {
              ? (dropoffCoords ? findSelectedDropoffRoute(dropoffCoords)?.routeId : null)
                || selectedTerminalBoundary.selectedRoute?.routeId || null
              : selectedTerminalBoundary.selectedRoute?.routeId || null,
-           payment_method: paymentMethod === 'GCASH' ? 'GCASH' : 'COD',
+           payment_method: paymentMethod,
            amount: fareAmount,
            // Private rides don't ask for a party size; don't persist the last
            // share-ride selection as extra passengers on this request.
@@ -6313,34 +6321,20 @@ const getPrice = () => {
             {/* Payment Method */}
             <div className="mb-4">
               <p className="text-sm font-semibold text-[var(--muted-foreground)] mb-2">Payment Method</p>
-              <div role="radiogroup" aria-label="Payment method" className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={paymentMethod === 'COD'}
-                  onClick={() => setPaymentMethod('COD')}
-                  className={`min-h-14 rounded-xl border-2 p-3 transition-colors ${paymentMethod === 'COD' ? 'border-[var(--primary)] bg-[var(--primary-soft)]' : 'border-line bg-card hover:bg-soft'}`}
-                >
-                  <div className="flex items-center justify-center gap-2">
-                    <span className="text-xl">{"\u{1F4B5}"}</span>
-                    <span className={`font-semibold ${paymentMethod === 'COD' ? 'text-[var(--ink)]' : 'text-[var(--muted-foreground)]'}`}>Cash</span>
-                  </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (user?.isGuest) setShowGuestCashRestriction(true);
+                }}
+                aria-haspopup={user?.isGuest ? "dialog" : undefined}
+                className="flex min-h-14 w-full items-center justify-center gap-2 rounded-xl border-2 border-[var(--primary)] bg-[var(--primary-soft)] p-3 text-center"
+              >
+                <span className="text-xl">{"\u{1F4B5}"}</span>
+                <div className="text-center">
+                  <p className="font-semibold text-[var(--ink)]">Cash</p>
                   <p className="mt-1 text-[10px] font-semibold text-[var(--muted-foreground)]">Pay the driver</p>
-                </button>
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={paymentMethod === 'GCASH'}
-                  onClick={() => setPaymentMethod('GCASH')}
-                  className={`min-h-14 rounded-xl border-2 p-3 transition-colors ${paymentMethod === 'GCASH' ? 'border-[var(--primary)] bg-[var(--primary-soft)]' : 'border-line bg-card hover:bg-soft'}`}
-                >
-                  <div className="flex items-center justify-center gap-2">
-                    <span className="text-xl">{"\u{1F4F1}"}</span>
-                    <span className={`font-semibold ${paymentMethod === 'GCASH' ? 'text-[var(--ink)]' : 'text-[var(--muted-foreground)]'}`}>GCash</span>
-                  </div>
-                  <p className="mt-1 text-[10px] font-semibold text-[var(--muted-foreground)]">Prepaid</p>
-                </button>
-              </div>
+                </div>
+              </button>
             </div>
 
             {/* Action Buttons */}
@@ -6357,6 +6351,55 @@ const getPrice = () => {
                 className="w-full py-6 text-lg font-semibold"
               >
                 Cancel
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showGuestCashRestriction && (
+        <div className="fixed inset-0 z-[10050] flex items-center justify-center bg-black/55 px-4 py-6 backdrop-blur-sm">
+          <div
+            ref={guestCashDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="guest-cash-title"
+            aria-describedby="guest-cash-description"
+            tabIndex={-1}
+            className="relative w-full max-w-sm rounded-2xl border border-line bg-card p-6 shadow-2xl outline-none"
+          >
+            <button
+              type="button"
+              onClick={() => setShowGuestCashRestriction(false)}
+              aria-label="Close"
+              className="absolute right-3 top-3 grid size-10 place-items-center rounded-xl text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--ink)]"
+            >
+              <X className="size-5" aria-hidden="true" />
+            </button>
+            <h2 id="guest-cash-title" className="pr-10 text-lg font-bold text-[var(--ink)]">
+              Cash payment requires an account
+            </h2>
+            <p id="guest-cash-description" className="mt-3 text-sm leading-relaxed text-[var(--muted-foreground)]">
+              Cash on delivery for rides is available only to registered customers. Register this guest account to book a ride and pay the driver in cash.
+            </p>
+            <div className="mt-5 flex gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1 border border-line"
+                onClick={() => setShowGuestCashRestriction(false)}
+              >
+                Not now
+              </Button>
+              <Button
+                type="button"
+                className="flex-1 bg-[var(--primary)] hover:bg-[var(--primary)]"
+                onClick={() => {
+                  setShowGuestCashRestriction(false);
+                  requestGuestRegisterForm();
+                }}
+              >
+                Register
               </Button>
             </div>
           </div>

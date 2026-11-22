@@ -4,6 +4,7 @@ import { isDevModeEnabled, isDevModeFeatureEnabled, subscribeToDevModeChanges } 
 import { isSuperAdminEmail } from '../../lib/superAdminIdentity';
 import { rememberAuthReturnPath } from '../../lib/authReturnPath';
 import { clearGuestSignout, rememberGuestSignout } from '../../lib/guestSignoutNotice';
+import { GUEST_NAME_PLACEHOLDER } from '../../lib/guestOnboarding';
 
 export type UserRole = 'customer' | 'rider' | 'business' | 'admin';
 
@@ -70,7 +71,7 @@ interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<LoginResult>;
-  continueAsGuest: (data: GuestSignupData) => Promise<LoginResult>;
+  continueAsGuest: () => Promise<LoginResult>;
   upgradeGuestAccount: (data: GuestUpgradeData) => Promise<GuestUpgradeResult>;
   logout: () => void;
   signup: (data: SignupData) => Promise<{ success: boolean; error?: string; userId?: string }>;
@@ -78,13 +79,6 @@ interface AuthContextType {
   switchUiRole: (role: User['role']) => void;
   restoreOriginalRole: () => void;
   resendVerificationEmail: (email: string) => Promise<{ success: boolean; error?: string }>;
-}
-
-interface GuestSignupData {
-  /** Goes to the rider at handover and is written to `users.name`. */
-  name: string;
-  /** Required: the rider calls it, and it is `NOT NULL` in the users table. */
-  phone: string;
 }
 
 interface GuestUpgradeData {
@@ -1510,14 +1504,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    * customer — orders, rides, chat and notifications all see a real id — and
    * the session stays on this device until they create a real account.
    */
-  const continueAsGuest = async ({ name, phone }: GuestSignupData): Promise<LoginResult> => {
-    const guestName = name.trim();
-    const guestPhone = phone.trim();
-    if (!guestName) return { success: false, error: 'Please enter your name.' };
-    if (!guestPhone) {
-      return { success: false, error: 'Please enter a phone number so your rider can reach you.' };
-    }
-
+  const continueAsGuest = async (): Promise<LoginResult> => {
     // Any earlier prompt is answered by starting a session of either kind.
     clearGuestSignout();
 
@@ -1548,8 +1535,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .insert([{
           id: guestId,
           email: guestEmailFor(guestId),
-          name: guestName,
-          phone: guestPhone,
+          // Collect a guest's name after sending them to the customer home.
+          name: GUEST_NAME_PLACEHOLDER,
+          // The existing users schema requires this column; guests can add a
+          // number later if a flow needs one.
+          phone: '',
           role: 'customer',
           original_role: 'customer',
           // Only business and rider accounts are approval-gated; a guest is a

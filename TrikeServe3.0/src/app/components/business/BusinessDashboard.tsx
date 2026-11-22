@@ -798,7 +798,7 @@ const previousWindowWord = range === 'today' ? 'day' : range;
               />
             </Card>
 
-            {/* Revenue — the food only; the delivery fee goes to the rider */}
+            {/* Net food sales; delivery fees are passed through to the driver. */}
             <Card className="min-w-0 gap-0 rounded-3xl p-4 lg:p-6 border border-line bg-card">
               <div className="flex flex-wrap items-start justify-between gap-2 mb-3 lg:mb-4">
                 <div className="min-w-0">
@@ -1111,7 +1111,7 @@ const previousWindowWord = range === 'today' ? 'day' : range;
                     {formatPeso(revenueSeries.total)}
                   </h3>
                   <p className="mt-1 text-xs text-[var(--muted-foreground)]">
-                    Food only — the delivery fee goes to the rider
+                    Food sales after delivery-fee payout to drivers
                   </p>
                 </div>
 

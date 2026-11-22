@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import { X } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { GUEST_REGISTER_FORM_REQUEST_EVENT, guestNeedsName } from "../../../lib/guestOnboarding";
 
 /**
  * The in-app nudge for a signed-in guest.
@@ -17,6 +19,7 @@ const DISMISSED_PREFIX = "trikeserve_guest_prompt_dismissed:";
 export default function GuestRegisterPrompt() {
   const { user, upgradeGuestAccount } = useAuth();
   const guestId = user?.isGuest ? user.id : null;
+  const guestName = user?.isGuest ? user.name : null;
 
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<"prompt" | "form" | "done">("prompt");
@@ -28,9 +31,14 @@ export default function GuestRegisterPrompt() {
   const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // No guest: either a registered customer, or the guest just upgraded in
-    // step "done" below. Either way the dialog's own state decides, not this.
+    // Ask for a display name before showing account registration, so new
+    // guests only see one first-run prompt at a time.
     if (!guestId) return;
+
+    if (guestNeedsName(guestName)) {
+      setOpen(false);
+      return;
+    }
 
     let dismissed = false;
     try {
@@ -45,11 +53,26 @@ export default function GuestRegisterPrompt() {
     setError("");
     setDoneMessage("");
     setOpen(!dismissed);
-  }, [guestId]);
+  }, [guestId, guestName]);
 
   useEffect(() => {
     if (open) dialogRef.current?.focus();
   }, [open]);
+
+  useEffect(() => {
+    const openRegistrationForm = () => {
+      if (!guestId || guestNeedsName(guestName)) return;
+      setStep("form");
+      setEmail("");
+      setPassword("");
+      setError("");
+      setDoneMessage("");
+      setOpen(true);
+    };
+
+    window.addEventListener(GUEST_REGISTER_FORM_REQUEST_EVENT, openRegistrationForm);
+    return () => window.removeEventListener(GUEST_REGISTER_FORM_REQUEST_EVENT, openRegistrationForm);
+  }, [guestId, guestName]);
 
   const dismiss = () => {
     if (guestId) {
@@ -94,11 +117,22 @@ export default function GuestRegisterPrompt() {
         aria-modal="true"
         aria-labelledby="guest-register-title"
         tabIndex={-1}
-        className="w-full max-w-sm rounded-2xl border border-line bg-card p-5 shadow-2xl outline-none"
+        className="relative w-full max-w-sm rounded-2xl border border-line bg-card p-5 shadow-2xl outline-none"
       >
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="absolute right-3 top-3 text-[var(--muted-foreground)] hover:text-[var(--ink)]"
+          aria-label="Close"
+          onClick={dismiss}
+          disabled={isSaving}
+        >
+          <X className="size-4" aria-hidden="true" />
+        </Button>
         {step === "done" ? (
           <>
-            <h2 id="guest-register-title" className="text-lg font-bold text-[var(--ink)]">
+            <h2 id="guest-register-title" className="pr-10 text-lg font-bold text-[var(--ink)]">
               You're registered
             </h2>
             <p className="mt-2 text-sm text-[var(--muted-foreground)]">{doneMessage}</p>
@@ -111,11 +145,11 @@ export default function GuestRegisterPrompt() {
           </>
         ) : step === "form" ? (
           <form onSubmit={handleRegister}>
-            <h2 id="guest-register-title" className="text-lg font-bold text-[var(--ink)]">
+            <h2 id="guest-register-title" className="pr-10 text-lg font-bold text-[var(--ink)]">
               Register your account
             </h2>
             <p className="mt-1 text-sm text-[var(--muted-foreground)]">
-              Your name, number, orders and rides stay exactly as they are.
+              Your name, orders and rides stay exactly as they are.
             </p>
 
             <div className="mt-4 space-y-3">
@@ -161,53 +195,49 @@ export default function GuestRegisterPrompt() {
 
             <div className="mt-4 flex gap-2">
               <Button
+                type="button"
+                variant="outline"
+                className="flex-1 border border-line"
+                onClick={() => dismiss()}
+                disabled={isSaving}
+              >
+                Not now
+              </Button>
+              <Button
                 type="submit"
                 className="flex-1 bg-[var(--primary)] hover:bg-[var(--primary)]"
                 disabled={isSaving}
               >
                 {isSaving ? "REGISTERING..." : "CREATE ACCOUNT"}
               </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className="border border-line"
-                onClick={() => dismiss()}
-                disabled={isSaving}
-              >
-                Not now
-              </Button>
             </div>
           </form>
         ) : (
           <>
-            <h2 id="guest-register-title" className="text-lg font-bold text-[var(--ink)]">
+            <h2 id="guest-register-title" className="pr-10 text-lg font-bold text-[var(--ink)]">
               Register to enjoy TrikeServe
             </h2>
             <p className="mt-2 text-sm text-[var(--muted-foreground)]">
               You're ordering as a guest. Register to keep your orders and rides, save your addresses,
-              and sign in from any device — your name and number stay as they are.
+              and sign in from any device — your name stays as it is.
             </p>
 
             <div className="mt-4 flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1 border border-line"
+                onClick={() => dismiss()}
+              >
+                Not now
+              </Button>
               <Button
                 className="flex-1 bg-[var(--primary)] hover:bg-[var(--primary)]"
                 onClick={() => setStep("form")}
               >
                 Register
               </Button>
-              <Button
-                type="button"
-                variant="outline"
-                className="border border-line"
-                onClick={() => dismiss()}
-              >
-                Not now
-              </Button>
             </div>
-
-            <p className="mt-3 text-[11px] text-[var(--muted-foreground)]">
-              Guests can order and book rides, but the session stays on this device.
-            </p>
           </>
         )}
       </div>

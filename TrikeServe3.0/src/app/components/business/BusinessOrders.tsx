@@ -39,6 +39,10 @@ function formatOrderTime(value: string): string {
   return `${twelve}:${String(at.getMinutes()).padStart(2, '0')}${suffix}`;
 }
 
+function gcashTransferIncludesDelivery(order: Pick<Order, 'gcashAmount' | 'subtotal' | 'total'>): boolean {
+  return Number(order.gcashAmount ?? order.subtotal) >= Number(order.total) - 0.01;
+}
+
 
 
 interface Order {
@@ -59,8 +63,9 @@ interface Order {
    * rider has been requested".
    */
   status: 'pending' | 'payment-confirmed' | 'confirmed' | 'preparing' | 'ready' | 'on-the-way' | 'delivered' | 'cancelled';
-  /** GCash only. The delivery fee is cash, collected by the rider at the door. */
-  /** GCash prepaid, or cash the rider collects at the door. */
+  /** The amount actually transferred by GCash; older rows contain only food subtotal. */
+  gcashAmount?: number | null;
+  /** GCash or cash on delivery. */
   paymentMethod: 'gcash' | 'cod';
   address: string;
   dropoffLat?: number | null;
@@ -884,6 +889,7 @@ export default function BusinessOrders() {
           items: parsedItems,
           total: dbOrder.total || 0,
           subtotal: dbOrder.subtotal || 0,
+          gcashAmount: dbOrder.gcash_amount == null ? null : Number(dbOrder.gcash_amount),
           // Retain the shop's existing in-transit UI state while keeping the
           // pickup milestone if ride_requests is briefly behind the order row.
           status: orderAlreadyPickedUp ? 'on-the-way' : dbOrder.status || 'pending',
@@ -2414,7 +2420,9 @@ export default function BusinessOrders() {
                   </h3>
                   <p className="text-xs md:text-sm text-[var(--muted-foreground)] mb-3">
                     {selectedOrder.paymentMethod === 'gcash'
-                      ? `₱${(selectedOrder.total - selectedOrder.deliveryFee).toFixed(2)} by GCash, ₱${selectedOrder.deliveryFee.toFixed(2)} delivery fee in cash to the rider.`
+                      ? gcashTransferIncludesDelivery(selectedOrder)
+                        ? `Customer pays the full ₱${selectedOrder.total.toFixed(2)} by GCash. Pay the driver ₱${selectedOrder.deliveryFee.toFixed(2)} for delivery.`
+                        : `Customer pays ₱${(selectedOrder.gcashAmount ?? selectedOrder.subtotal).toFixed(2)} by GCash. The customer pays the driver ₱${selectedOrder.deliveryFee.toFixed(2)} for delivery.`
                       : `Cash on delivery: the rider collects ₱${selectedOrder.total.toFixed(2)} (₱${(selectedOrder.total - selectedOrder.deliveryFee).toFixed(2)} food + ₱${selectedOrder.deliveryFee.toFixed(2)} delivery fee).`}
                   </p>
 
@@ -2493,13 +2501,12 @@ export default function BusinessOrders() {
                           <CheckCircle className="w-3 h-3 mr-1" />
                           Paid by GCash
                         </Badge>
-                        {/* The rider collects this part in cash. It was folded
-                            into the COD badge before, which read as though the
-                            whole order was unpaid -- the food had already been
-                            transferred. */}
+                        {/* The restaurant passes this fee through to the driver. */}
                         <Badge className="border-[var(--amber)] text-[var(--amber)] text-xs md:text-sm" variant="outline">
                           <AlertCircle className="w-3 h-3 mr-1" />
-                          Delivery fee: cash to rider
+                          {gcashTransferIncludesDelivery(selectedOrder)
+                            ? `Pay driver: ₱${selectedOrder.deliveryFee.toFixed(2)}`
+                            : `Customer pays driver: ₱${selectedOrder.deliveryFee.toFixed(2)}`}
                         </Badge>
                       </>
                     ) : (
@@ -2825,7 +2832,7 @@ export default function BusinessOrders() {
             </h2>
             <p className="text-xs text-[var(--muted-foreground)] mb-3">
               {selectedOrder.paymentMethod === 'gcash'
-                ? 'This confirms the GCash payment and moves the order to Preparing.'
+                ? 'This confirms the full GCash payment and moves the order to Preparing.'
                 : 'This accepts the order and moves it to Preparing. The rider collects the cash on delivery.'}
             </p>
             <p className="text-sm text-[var(--muted-foreground)] mb-1">Order #{selectedOrder.orderNumber}</p>

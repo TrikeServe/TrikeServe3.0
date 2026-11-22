@@ -1923,9 +1923,8 @@ const clearHours = async () => {
                             placeholder={'GCash number: 0917 123 4567\nName: Juan Dela Cruz\nSend the exact amount and put your order number as the reference.'}
                           />
                           <p className="text-xs text-[var(--muted-foreground)] mt-1">
-                            Shown word for word at checkout, above the payment proof
-                            upload. Customers transfer the food amount by GCash and pay the
-                            delivery fee in cash to the rider.
+                            Shown word for word at checkout. Customers transfer the full
+                            order total by GCash; your shop pays the delivery fee to the driver.
                           </p>
                           <p className="mt-2 text-xs font-semibold text-[var(--muted-foreground)]">
                             Included with Save changes below.

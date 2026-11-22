@@ -17,11 +17,13 @@ import { getProfileInitials } from "@/lib/profileInitials";
 export default function Account() {
   const navigate = useNavigate();
   const { user, logout, restoreOriginalRole } = useAuth();
+  const isGuest = user?.isGuest === true;
   const [formData, setFormData] = useState({
     name: user?.name || "User",
     mobile: user?.phone || "",
     email: user?.email || "",
   });
+  const displayEmail = isGuest ? "Not set" : formData.email || "No email set";
   const [showGoodbye, setShowGoodbye] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showSwitchConfirm, setShowSwitchConfirm] = useState(false);
@@ -60,14 +62,14 @@ export default function Account() {
 
       // Upgrade an address saved by the older local-only profile flow.
       const localAddress = getDefaultAddress(userId, email);
-      if (!localAddress) return;
+      if (!localAddress || user?.isGuest) return;
       const result = await saveAccountDefaultAddress(localAddress, userId);
       if (!cancelled && selectionVersion === addressSelectionVersion.current && result.error) {
         console.warn("[Account] Could not sync the saved delivery address.");
       }
     });
     return () => { cancelled = true; };
-  }, [user?.id, user?.email]);
+  }, [user?.id, user?.email, user?.isGuest]);
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -163,7 +165,9 @@ export default function Account() {
 
           {/* User Name & Email */}
           <h1 className="text-base font-bold text-[var(--ink)]">{formData.name}</h1>
-          <p className="text-[11px] text-[var(--muted-foreground)]">{formData.email || "No email set"}</p>
+          {!isGuest && (
+            <p className="text-[11px] text-[var(--muted-foreground)]">{displayEmail}</p>
+          )}
 
           {/* Editing lives on its own screen now. */}
           <button
@@ -220,7 +224,8 @@ export default function Account() {
 
           <button
             onClick={() => setShowAddressMap(true)}
-            className="w-full flex items-center gap-3 p-4 text-left bg-[var(--muted)] border border-[var(--border)] rounded-xl active:scale-[0.98] transition-transform"
+            disabled={isGuest}
+            className="w-full flex items-center gap-3 p-4 text-left bg-[var(--muted)] border border-[var(--border)] rounded-xl active:scale-[0.98] transition-transform disabled:cursor-not-allowed disabled:opacity-80"
           >
             <MapPin className="w-5 h-5 text-[var(--primary)] flex-shrink-0" />
             <div className="flex-1 min-w-0">
@@ -237,12 +242,14 @@ export default function Account() {
               )}
             </div>
             <span className="text-xs font-semibold text-[var(--primary)] flex-shrink-0">
-              {defaultAddress ? 'Change' : 'Set'}
+              {isGuest ? 'Checkout' : defaultAddress ? 'Change' : 'Set'}
             </span>
           </button>
 
           <p className="text-xs text-[var(--muted-foreground)] mt-3 leading-relaxed">
-            Used automatically as the delivery address when you place an order.
+            {isGuest
+              ? 'Choose a delivery address during checkout. Guest accounts cannot save default addresses.'
+              : 'Used automatically as the delivery address when you place an order.'}
           </p>
           {addressSaveStatus !== "idle" && (
             <p
@@ -284,18 +291,22 @@ export default function Account() {
           <div>
             <p className="block text-xs font-medium text-[var(--muted-foreground)] mb-2 tracking-wider">Email</p>
             <p className="w-full text-base font-medium text-[var(--ink)] pb-2 border-b border-[var(--border)]">
-              {formData.email || 'No email set'}
+              {displayEmail}
             </p>
             <p className="text-xs text-[var(--muted-foreground)] mt-2 leading-relaxed">
-              We'll reach out to you via email for account-related issues and product communication purposes.
+              {isGuest
+                ? 'Add an email when you register to receive account-related updates.'
+                : "We'll reach out to you via email for account-related issues and product communication purposes."}
             </p>
           </div>
         </div>
 
         {/* Appearance */}
-        <div className="rounded-2xl border border-line bg-card p-4 shadow-sm">
-          <ThemeModeSwitcher bilingual />
-        </div>
+        {!isGuest && (
+          <div className="rounded-2xl border border-line bg-card p-4 shadow-sm">
+            <ThemeModeSwitcher bilingual />
+          </div>
+        )}
 
         {/* Switch Back to Driver/Business Button */}
         {localStorage.getItem('trikeserve_original_role') === 'rider' && (

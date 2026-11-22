@@ -16,7 +16,7 @@ interface TripHistoryItem {
   date: string;
   amount: number;
   status: 'completed' | 'cancelled';
-  payment: 'Cash' | 'Prepaid';
+  payment: 'Cash' | 'Prepaid' | 'Restaurant';
   customerName?: string;
   pickup?: string;
   dropoff?: string;
@@ -224,9 +224,11 @@ export default function Earnings() {
               date: dateISO,
               amount: Number(ride.amount) || 0,
               status,
-              // Delivery earnings are the delivery fee, which the rider receives
-              // in cash even when the customer's food payment was prepaid by GCash.
-              payment: (isDelivery || (ride.payment_method || ride.payment) === 'COD' ? 'Cash' : 'Prepaid') as 'Cash' | 'Prepaid',
+              // GCash delivery fees are paid by the restaurant, while COD fees
+              // are part of the cash the rider collects from the customer.
+              payment: isDelivery
+                ? String(ride.payment_method || ride.payment).toUpperCase() === 'COD' ? 'Cash' : 'Restaurant'
+                : String(ride.payment_method || ride.payment).toUpperCase() === 'COD' ? 'Cash' : 'Prepaid',
               customerName: ride.customer_name || ride.customerName || 'Customer',
               pickup: pickup || 'Pickup',
               dropoff: dropoff || dropoffs[0] || 'Drop-off',
@@ -591,9 +593,9 @@ export default function Earnings() {
                             <p className="font-extrabold text-lg text-[var(--primary)]">₱{trip.amount.toFixed(2)}</p>
                             <Badge
                               variant="outline"
-                              className={`text-[10px] rounded-full ${trip.payment === 'Cash' ? 'border-[var(--amber)] text-[var(--amber)]' : 'border-[var(--success)] text-[var(--success)]'}`}
+                              className={`text-[10px] rounded-full ${trip.payment === 'Cash' ? 'border-[var(--amber)] text-[var(--amber)]' : trip.payment === 'Restaurant' ? 'border-[var(--info)] text-[var(--info)]' : 'border-[var(--success)] text-[var(--success)]'}`}
                             >
-                              {trip.payment === 'Cash' ? '💵 Cash' : '💳 GCash'}
+                              {trip.payment === 'Cash' ? '💵 Cash' : trip.payment === 'Restaurant' ? '🏪 Restaurant pays' : '💳 GCash'}
                             </Badge>
                           </>
                         )}

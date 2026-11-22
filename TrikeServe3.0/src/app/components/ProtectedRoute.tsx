@@ -5,6 +5,7 @@ import { effectiveRole, ROLE_HOME } from '../../lib/roleAccess';
 import { rememberAuthReturnPath } from '../../lib/authReturnPath';
 import Login from './Login';
 import GuestRegisterPrompt from './customer/GuestRegisterPrompt';
+import GuestNamePrompt from './customer/GuestNamePrompt';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -55,10 +56,21 @@ export default function ProtectedRoute({ children, allowedRoles }: ProtectedRout
     return <Navigate to={(role && ROLE_HOME[role]) || '/'} replace />;
   }
 
+  // Guests have one customer profile and no credential or household-profile
+  // management. Send legacy profile links to the single name editor and keep
+  // multi-profile management registered-account only.
+  if (user.isGuest && location.pathname === '/customer/profile') {
+    return <Navigate to="/customer/edit-profile" replace />;
+  }
+  if (user.isGuest && location.pathname === '/customer/account-management') {
+    return <Navigate to="/customer/account" replace />;
+  }
+
   return (
     <>
-      {/* Rendered for every customer route; it stays silent unless the signed-in
-          account is a guest, so a registered customer never sees it. */}
+      {/* Guest setup runs on the customer route before the optional account
+          registration nudge; registered customers see neither prompt. */}
+      {role === 'customer' && <GuestNamePrompt />}
       {role === 'customer' && <GuestRegisterPrompt />}
       {children}
     </>
