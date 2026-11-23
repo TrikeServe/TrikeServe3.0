@@ -14,7 +14,6 @@ import { adminDeleteUser, adminVerifyUser, logAudit } from "../../../lib/supabas
 import ConfirmationModal from "../ui/confirmation-modal";
 import Toast from "../ui/Toast";
 import SuperAdminOverview from "./SuperAdminOverview";
-import OnlineDriversForTerminal from "./OnlineDriversForTerminal";
 import AdminAnalytics from "./AdminAnalytics";
 import { Link } from "react-router";
 import AdminPageIntro, { AdminMetricCards } from "./AdminPageIntro";
@@ -47,6 +46,7 @@ interface PendingUser {
   phone: string;
   documents: string[];
   submittedDate: string;
+  submittedAt?: string;
   todaPlate?: string;
   licenseNumber?: string;
   businessName?: string;
@@ -141,6 +141,7 @@ export default function AdminDashboard() {
             ? ['TODA Plate', 'Driver\'s License', 'Valid ID']
             : ['Business Permit', 'Sanitary Permit', 'Valid ID'],
           submittedDate: new Date(u.createdAt).toLocaleDateString('en-PH'),
+          submittedAt: u.createdAt,
           todaPlate: u.todaPlate,
           licenseNumber: u.licenseNumber,
           businessName: u.businessName,
@@ -267,6 +268,7 @@ export default function AdminDashboard() {
             ? ['TODA Plate', 'Driver\'s License', 'Valid ID']
             : ['Business Permit', 'Sanitary Permit', 'Valid ID'],
           submittedDate: new Date(u.createdAt).toLocaleDateString('en-PH'),
+          submittedAt: u.createdAt,
           todaPlate: u.todaPlate,
           licenseNumber: u.licenseNumber,
           businessName: u.businessName,
@@ -506,13 +508,6 @@ export default function AdminDashboard() {
             { label: 'Awaiting verification', value: pendingVerifications.length, detail: 'Account reviews · not change requests', Icon: Clock, tone: 'amber' },
           ]} />
           <AdminAnalytics
-            terminalId={user?.terminalId ?? null}
-            terminalName={user?.terminalName}
-            refreshToken={analyticsRefresh}
-          />
-          <OnlineDriversForTerminal
-            terminalId={user?.terminalId ?? null}
-            terminalName={user?.terminalName}
             refreshToken={analyticsRefresh}
           />
           <section aria-labelledby="driver-workspace-title">

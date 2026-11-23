@@ -20,6 +20,11 @@ CREATE TABLE IF NOT EXISTS users (
   -- Admin specific
   admin_type VARCHAR(50) CHECK (admin_type IN ('admin', 'rider')),
 
+  -- Rider terminal assignment
+  terminal_id TEXT,
+  terminal_name VARCHAR(255),
+  is_terminal_admin BOOLEAN DEFAULT false,
+
   -- Rider specific
   toda_plate VARCHAR(50),
   license_number VARCHAR(50),
@@ -52,9 +57,12 @@ CREATE TABLE IF NOT EXISTS ride_requests (
   status VARCHAR(50) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'in_progress', 'completed', 'cancelled')),
   ride_type VARCHAR(50) NOT NULL CHECK (ride_type IN ('share', 'special')),
   route_id TEXT,
+  terminal_id TEXT,
   payment_method VARCHAR(50) NOT NULL CHECK (payment_method IN ('COD', 'GCASH')),
   amount DECIMAL(10, 2) NOT NULL,
   passenger_count INTEGER NOT NULL DEFAULT 1,
+  accepted_at TIMESTAMP WITH TIME ZONE,
+  completed_at TIMESTAMP WITH TIME ZONE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -65,6 +73,40 @@ ALTER TABLE public.ride_requests
 CREATE INDEX idx_ride_requests_customer ON ride_requests(customer_id);
 CREATE INDEX idx_ride_requests_driver ON ride_requests(driver_id);
 CREATE INDEX idx_ride_requests_status ON ride_requests(status);
+CREATE INDEX IF NOT EXISTS idx_ride_requests_terminal_created_at ON ride_requests(terminal_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_ride_requests_terminal_completed_at ON ride_requests(terminal_id, completed_at) WHERE completed_at IS NOT NULL;
+
+CREATE OR REPLACE FUNCTION public.set_ride_request_completed_at()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.accepted_at IS NULL AND (
+    NEW.status IN ('accepted', 'in_progress', 'completed')
+    OR NEW.driver_id IS NOT NULL
+    OR NEW.accepted_driver_id IS NOT NULL
+  ) THEN
+    NEW.accepted_at := NOW();
+  END IF;
+
+  IF NEW.status = 'completed' THEN
+    IF TG_OP = 'INSERT' THEN
+      NEW.completed_at := COALESCE(NEW.completed_at, NOW());
+    ELSE
+      NEW.completed_at := COALESCE(OLD.completed_at, NEW.completed_at, NOW());
+    END IF;
+  ELSE
+    NEW.completed_at := NULL;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_ride_requests_completed_at ON public.ride_requests;
+DROP TRIGGER IF EXISTS trg_ride_requests_analytics_timestamps ON public.ride_requests;
+CREATE TRIGGER trg_ride_requests_analytics_timestamps
+  BEFORE INSERT OR UPDATE OF status, driver_id, accepted_driver_id ON public.ride_requests
+  FOR EACH ROW EXECUTE FUNCTION public.set_ride_request_completed_at();
 
 -- Shared Ride Lobbies Table
 CREATE TABLE IF NOT EXISTS shared_ride_lobbies (
@@ -191,6 +233,7 @@ CREATE TABLE IF NOT EXISTS orders (
   delivery_proof_url TEXT,
   delivery_proof_uploaded_at TIMESTAMPTZ,
   delivery_mode VARCHAR(20) NOT NULL,
+  terminal_id TEXT,
   payment_method VARCHAR(20) NOT NULL,
   address TEXT,
   estimated_time VARCHAR(50),
@@ -202,6 +245,7 @@ CREATE TABLE IF NOT EXISTS orders (
 CREATE INDEX idx_orders_customer ON orders(customer_id);
 CREATE INDEX idx_orders_business ON orders(business_id);
 CREATE INDEX idx_orders_status ON orders(status);
+CREATE INDEX IF NOT EXISTS idx_orders_terminal_created_at ON orders(terminal_id, created_at);
 -- The shop's payment queue: orders awaiting a payment decision.
 CREATE INDEX idx_orders_awaiting_payment ON orders(status) WHERE payment_confirmed_at IS NULL;
 

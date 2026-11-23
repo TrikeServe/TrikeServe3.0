@@ -17,6 +17,7 @@ type ReviewAccount = {
   email: string;
   phone: string;
   submittedDate: string;
+  submittedAt?: string;
   todaPlate?: string;
 };
 
@@ -31,8 +32,7 @@ type OverviewStats = {
 type OnlineAccount = {
   id: string;
   name: string;
-  email: string;
-  role: "customer" | "rider" | "business";
+  terminalName: string;
 };
 
 type SuperAdminOverviewProps = {
@@ -67,7 +67,18 @@ const SHORTCUTS = [
   { to: "/admin/approvals", label: "Change requests", detail: "Review terminal updates", Icon: ClipboardCheck },
 ];
 
-const ONLINE_USERS_PAGE_SIZE = 10;
+const ONLINE_DRIVERS_PAGE_SIZE = 10;
+
+function reviewWait(submittedAt?: string) {
+  if (!submittedAt) return null;
+  const submitted = new Date(submittedAt);
+  const hours = (Date.now() - submitted.getTime()) / 3_600_000;
+  if (!Number.isFinite(hours) || hours < 0) return null;
+  if (hours < 1) return "under 1h";
+  if (hours < 24) return `${Math.floor(hours)}h`;
+  const days = Math.floor(hours / 24);
+  return `${days}d`;
+}
 
 /** Account actions retain the page's existing confirmation flow. */
 export default function SuperAdminOverview({
@@ -84,16 +95,19 @@ export default function SuperAdminOverview({
   const hasData = lastUpdated !== null;
   const firstLoad = loading && !hasData;
   const shown = showAllPending ? pending : pending.slice(0, 3);
-  const onlinePageCount = Math.max(1, Math.ceil(onlineAccounts.length / ONLINE_USERS_PAGE_SIZE));
+  const onlinePageCount = Math.max(1, Math.ceil(onlineAccounts.length / ONLINE_DRIVERS_PAGE_SIZE));
   const safeOnlinePage = Math.min(Math.max(onlinePage, 1), onlinePageCount);
   const shownOnlineAccounts = onlineAccounts.slice(
-    (safeOnlinePage - 1) * ONLINE_USERS_PAGE_SIZE,
-    safeOnlinePage * ONLINE_USERS_PAGE_SIZE,
+    (safeOnlinePage - 1) * ONLINE_DRIVERS_PAGE_SIZE,
+    safeOnlinePage * ONLINE_DRIVERS_PAGE_SIZE,
   );
   const firstOnlineAccount = onlineAccounts.length === 0
     ? 0
-    : (safeOnlinePage - 1) * ONLINE_USERS_PAGE_SIZE + 1;
-  const lastOnlineAccount = Math.min(safeOnlinePage * ONLINE_USERS_PAGE_SIZE, onlineAccounts.length);
+    : (safeOnlinePage - 1) * ONLINE_DRIVERS_PAGE_SIZE + 1;
+  const lastOnlineAccount = Math.min(safeOnlinePage * ONLINE_DRIVERS_PAGE_SIZE, onlineAccounts.length);
+  const onlineTerminalCounts = new Map<string, number>();
+  onlineAccounts.forEach(account => onlineTerminalCounts.set(account.terminalName, (onlineTerminalCounts.get(account.terminalName) || 0) + 1));
+  const onlineTerminalSummary = [...onlineTerminalCounts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
 
   useEffect(() => {
     let active = true;
@@ -114,7 +128,8 @@ export default function SuperAdminOverview({
 
       const { data, error } = await supabase
         .from("users")
-        .select("id,name,email,role,business_name")
+        .select("id,name,role,terminal_id,terminal_name")
+        .eq("role", "rider")
         .in("id", onlineIds);
 
       if (!active || request !== latestRequest) return;
@@ -124,16 +139,13 @@ export default function SuperAdminOverview({
       }
 
       const accounts: OnlineAccount[] = (data || [])
-        .filter((account: any) => ["customer", "rider", "business"].includes(account.role))
+        .filter((account: any) => account.role === "rider")
         .map((account: any) => ({
           id: account.id,
-          name: account.role === "business"
-            ? (account.business_name || account.name || "Business")
-            : (account.name || "User"),
-          email: account.email || "",
-          role: account.role,
+          name: account.name || "Driver",
+          terminalName: account.terminal_name || account.terminal_id || "No terminal assigned",
         }))
-        .sort((a, b) => a.name.localeCompare(b.name));
+        .sort((a, b) => a.terminalName.localeCompare(b.terminalName) || a.name.localeCompare(b.name));
 
       setOnlineAccounts(accounts);
       setPresenceStatus("live");
@@ -220,43 +232,51 @@ export default function SuperAdminOverview({
         </div>
       </section>
 
-      <section aria-labelledby="overview-online-users-title" aria-busy={presenceStatus === "connecting"}>
+      <section aria-labelledby="overview-connected-drivers-title" aria-busy={presenceStatus === "connecting"}>
         <Card className="gap-0 overflow-hidden rounded-3xl border-line bg-card">
           <div className="flex flex-wrap items-center gap-3 border-b border-line p-4 sm:p-5">
             <span className="relative grid size-10 shrink-0 place-items-center rounded-xl bg-[var(--success-soft)] text-[var(--success-ink)]">
-              <Users className="size-5" aria-hidden="true" />
+              <TerminalIconGlyph className="size-5" aria-hidden="true" />
               <span className={`absolute bottom-1 right-1 size-2.5 rounded-full border-2 border-card ${presenceStatus === "live" ? "bg-[var(--success-ink)]" : "bg-[var(--amber-ink)]"}`} aria-hidden="true" />
             </span>
             <div className="min-w-0 flex-1">
-              <h2 id="overview-online-users-title" className="text-base font-bold text-[var(--ink)]">Online users</h2>
-              <p className="mt-0.5 text-xs leading-relaxed text-[var(--muted-foreground)]">Customers, drivers, and businesses currently connected</p>
+              <h2 id="overview-connected-drivers-title" className="text-base font-bold text-[var(--ink)]">Drivers connected now</h2>
+              <p className="mt-0.5 text-xs leading-relaxed text-[var(--muted-foreground)]">Drivers with TrikeServe open, grouped by assigned terminal</p>
             </div>
-            <span className="rounded-lg bg-[var(--success-soft)] px-2.5 py-1 text-sm font-extrabold text-[var(--success-ink)] tabular-nums" aria-label={presenceStatus === "live" ? `${onlineAccounts.length} online users` : presenceStatus === "connecting" ? "Loading online users" : "Online user count unavailable"}>
+            <span className="rounded-lg bg-[var(--success-soft)] px-2.5 py-1 text-sm font-extrabold text-[var(--success-ink)] tabular-nums" aria-label={presenceStatus === "live" ? `${onlineAccounts.length} connected drivers` : presenceStatus === "connecting" ? "Loading connected drivers" : "Connected driver count unavailable"}>
               {presenceStatus === "live" ? onlineAccounts.length.toLocaleString() : "—"}
             </span>
           </div>
 
+          {presenceStatus === "live" && onlineTerminalSummary.length > 0 && (
+            <div aria-label="Connected drivers per terminal" className="flex flex-wrap gap-2 border-b border-line px-4 py-3 sm:px-5">
+              {onlineTerminalSummary.map(([terminal, count]) => (
+                <span key={terminal} className="rounded-lg bg-[var(--success-soft)] px-2.5 py-1.5 text-xs font-semibold text-[var(--success-ink)]">
+                  {terminal} <strong className="ml-1 tabular-nums">{count}</strong>
+                </span>
+              ))}
+            </div>
+          )}
+
           {presenceStatus === "connecting" ? (
-            <p role="status" className="px-5 py-8 text-center text-sm text-[var(--muted-foreground)]">Connecting to live user presence…</p>
+            <p role="status" className="px-5 py-8 text-center text-sm text-[var(--muted-foreground)]">Connecting to live driver presence…</p>
           ) : presenceStatus === "error" ? (
-            <p role="alert" className="px-5 py-8 text-center text-sm text-[var(--muted-foreground)]">Live user presence is temporarily unavailable. Refresh the overview to try again.</p>
+            <p role="alert" className="px-5 py-8 text-center text-sm text-[var(--muted-foreground)]">Live driver presence is temporarily unavailable. Refresh the overview to try again.</p>
           ) : onlineAccounts.length === 0 ? (
-            <p className="px-5 py-8 text-center text-sm text-[var(--muted-foreground)]">No customers, drivers, or businesses are online right now.</p>
+            <p className="px-5 py-8 text-center text-sm text-[var(--muted-foreground)]">No drivers are connected right now.</p>
           ) : (
             <>
-              <ul aria-label="Users currently online" className="grid gap-2 p-4 sm:grid-cols-2 sm:p-5">
+              <ul aria-label="Drivers connected now" className="grid gap-2 p-4 sm:grid-cols-2 sm:p-5">
                 {shownOnlineAccounts.map(account => (
                   <li key={account.id} className="flex min-w-0 items-center gap-3 rounded-2xl border border-line bg-card px-3 py-3">
                     <span className="grid size-10 shrink-0 place-items-center rounded-full bg-soft text-sm font-bold uppercase text-[var(--ink)]" aria-hidden="true">
-                      {account.name.trim().charAt(0) || "U"}
+                      {account.name.trim().charAt(0) || "D"}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-bold text-[var(--ink)]">{account.name}</span>
-                      {account.email && <span className="block truncate text-xs text-[var(--muted-foreground)]">{account.email}</span>}
+                      <span className="block truncate text-xs text-[var(--muted-foreground)]">{account.terminalName}</span>
                     </span>
-                    <span className="shrink-0 rounded-md bg-[var(--success-soft)] px-2 py-1 text-[10px] font-bold text-[var(--success-ink)]">
-                      {account.role === "rider" ? "Driver" : account.role === "business" ? "Business" : "Customer"}
-                    </span>
+                    <span className="shrink-0 rounded-md bg-[var(--success-soft)] px-2 py-1 text-[10px] font-bold text-[var(--success-ink)]">Connected</span>
                   </li>
                 ))}
               </ul>
@@ -266,19 +286,19 @@ export default function SuperAdminOverview({
                     Showing <span className="font-bold text-[var(--ink)] tabular-nums">{firstOnlineAccount}</span>
                     –<span className="font-bold text-[var(--ink)] tabular-nums">{lastOnlineAccount}</span> of{" "}
                     <span className="font-bold text-[var(--ink)] tabular-nums">{onlineAccounts.length.toLocaleString()}</span>{" "}
-                    {onlineAccounts.length === 1 ? "user" : "users"}
+                    {onlineAccounts.length === 1 ? "driver" : "drivers"}
                   </p>
                   <ListPagination
                     page={safeOnlinePage}
                     pageCount={onlinePageCount}
                     onChange={setOnlinePage}
-                    label="Online users"
+                    label="Connected drivers"
                   />
                 </div>
               </div>
             </>
           )}
-          <p className="border-t border-line px-4 py-3 text-xs text-[var(--muted-foreground)] sm:px-5">Updates live while users have TrikeServe open.</p>
+          <p className="border-t border-line px-4 py-3 text-xs text-[var(--muted-foreground)] sm:px-5">Updates live while drivers have TrikeServe open.</p>
         </Card>
       </section>
 
@@ -325,7 +345,7 @@ export default function SuperAdminOverview({
                       </div>
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
                         <span className={`rounded-md px-2 py-0.5 font-bold ${account.type === "rider" ? "bg-[var(--info-soft)] text-[var(--info)]" : "bg-[var(--violet-soft)] text-[var(--violet)]"}`}>{account.type === "rider" ? "Driver" : "Business"}</span>
-                        <span className="text-[var(--muted-foreground)]">Submitted {account.submittedDate}</span>
+                        <span className="text-[var(--muted-foreground)]">Submitted {account.submittedDate}{reviewWait(account.submittedAt) ? ` · waiting ${reviewWait(account.submittedAt)}` : ""}</span>
                       </div>
                       {(account.phone || account.todaPlate) && (
                         <p className="break-words text-xs text-[var(--muted-foreground)]">{[account.phone, account.todaPlate ? `Plate: ${account.todaPlate}` : null].filter(Boolean).join(" · ")}</p>
