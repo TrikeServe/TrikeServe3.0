@@ -17,7 +17,7 @@ export default function AdminAnalyticsPage() {
       subtitle={
         isRiderAdmin
           ? `${terminalName || "Your terminal"} · demand, response times, and delivery workload`
-          : "Service demand, terminal health, and operational exceptions"
+          : "Service demand, ride outcomes, and operational activity"
       }
     >
       <AdminAnalytics />

@@ -21,6 +21,17 @@ export interface BarDatum {
   value: number;
 }
 
+export interface GroupedBarDatum {
+  label: string;
+  values: Record<string, number>;
+}
+
+export interface GroupedBarSeries {
+  key: string;
+  label: string;
+  color: string;
+}
+
 /**
  * A point on a line, which may be missing.
  *
@@ -163,6 +174,86 @@ export function AnalyticsBarChart({
           </span>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** Compare several operational counts over the same time buckets. */
+export function AnalyticsGroupedBarChart({
+  data,
+  series,
+  height = 180,
+  emptyHint,
+}: {
+  data: GroupedBarDatum[];
+  series: GroupedBarSeries[];
+  height?: number;
+  emptyHint?: string;
+}) {
+  const { ref, width } = useElementWidth();
+  const values = data.flatMap((datum) => series.map((item) => Number(datum.values[item.key]) || 0));
+  if (!data.length || !series.length || !values.some((value) => value > 0)) {
+    return <EmptyChart hint={emptyHint} />;
+  }
+
+  const max = Math.max(...values, 1);
+  const showBarValues = data.length <= 12 && (data.length <= 7 || width >= 720);
+  const accessibleSummary = data
+    .map((datum) => `${datum.label}: ${series.map((item) => `${item.label} ${Number(datum.values[item.key]) || 0}`).join(", ")}`)
+    .join(". ");
+
+  return (
+    <div ref={ref} role="img" aria-label={accessibleSummary}>
+      <div className="flex items-end gap-2" style={{ height }}>
+        {data.map((datum, index) => (
+          <div key={`${datum.label}-${index}`} className="flex h-full min-w-0 flex-1 items-end justify-center gap-0.5">
+            {series.map((item) => {
+              const value = Math.max(0, Number(datum.values[item.key]) || 0);
+              const barHeight = value > 0 ? Math.max((value / max) * (showBarValues ? 86 : 100), 4) : 0;
+              return (
+                <div key={item.key} className="relative flex h-full min-w-0 flex-1 items-end justify-center">
+                  <div
+                    className="w-full max-w-[28px] rounded-t-md transition-all"
+                    style={{ height: `${barHeight}%`, backgroundColor: item.color }}
+                    title={`${datum.label} · ${item.label}: ${value}`}
+                  />
+                  {showBarValues && value > 0 && (
+                    <span
+                      className="pointer-events-none absolute left-1/2 -translate-x-1/2 whitespace-nowrap text-[8px] font-bold tabular-nums text-[var(--muted-foreground)]"
+                      style={{ bottom: `calc(${barHeight}% + 2px)` }}
+                    >
+                      {formatCompact(value)}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 flex gap-2">
+        {data.map((datum, index) => (
+          <span
+            key={`${datum.label}-label-${index}`}
+            title={datum.label}
+            className="min-w-0 flex-1 truncate text-center text-xs font-semibold text-[var(--muted-foreground)]"
+          >
+            {datum.label}
+          </span>
+        ))}
+      </div>
+      <ul aria-hidden="true" className="mt-3 flex flex-wrap gap-x-4 gap-y-2">
+        {series.map((item) => {
+          const total = data.reduce((sum, datum) => sum + Math.max(0, Number(datum.values[item.key]) || 0), 0);
+          return (
+            <li key={item.key} className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[var(--muted-foreground)]">
+              <span className="size-2.5 rounded-sm" style={{ backgroundColor: item.color }} />
+              {item.label}
+              <strong className="tabular-nums text-[var(--ink)]">{formatCompact(total)}</strong>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

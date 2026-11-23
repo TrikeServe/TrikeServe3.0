@@ -1,6 +1,6 @@
 import { supabase } from "../utils/supabase";
 
-export type AdminAnalyticsPeriod = "today" | "week" | "month";
+export type AdminAnalyticsPeriod = "today" | "week" | "month" | "year" | "date";
 
 export interface AdminAnalyticsMetrics {
   requests: number;
@@ -62,10 +62,12 @@ export interface AdminAnalyticsResponse {
 export async function fetchAdminAnalytics(
   credentials: { email: string; password?: string },
   period: AdminAnalyticsPeriod,
+  date?: string,
 ): Promise<AdminAnalyticsResponse> {
   const { data, error } = await supabase.functions.invoke<AdminAnalyticsResponse>("admin-analytics", {
     body: {
       period,
+      ...(period === "date" && date ? { date } : {}),
       ...(credentials.password
         ? { adminEmail: credentials.email, adminPassword: credentials.password }
         : {}),

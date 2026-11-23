@@ -14,7 +14,7 @@ const ACTIVE_ORDER_STATUSES = new Set([
   "pending", "payment-confirmed", "confirmed", "preparing", "ready", "picked_up", "on-the-way",
 ]);
 
-type Period = "today" | "week" | "month";
+type Period = "today" | "week" | "month" | "year" | "date";
 type Window = { start: Date; end: Date };
 type RideRow = {
   id: string;
@@ -57,7 +57,24 @@ function manilaMidnightUtc(localDate: Date) {
   ) - MANILA_OFFSET_MS);
 }
 
-function getWindows(period: Period, now = new Date()) {
+function parseManilaDateStart(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+
+  const [, yearText, monthText, dayText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const localDate = new Date(0);
+  localDate.setUTCFullYear(year, month - 1, day);
+  localDate.setUTCHours(0, 0, 0, 0);
+  if (localDate.getUTCFullYear() !== year || localDate.getUTCMonth() !== month - 1 || localDate.getUTCDate() !== day) {
+    return null;
+  }
+  return new Date(localDate.getTime() - MANILA_OFFSET_MS);
+}
+
+function getWindows(period: Period, now = new Date(), selectedDateStart?: Date) {
   const manilaNow = new Date(now.getTime() + MANILA_OFFSET_MS);
   const manilaTodayStart = new Date(Date.UTC(
     manilaNow.getUTCFullYear(),
@@ -66,14 +83,24 @@ function getWindows(period: Period, now = new Date()) {
   ));
   const currentStart = period === "today"
     ? manilaMidnightUtc(manilaTodayStart)
-    : new Date(now.getTime() - (period === "week" ? 7 : 30) * 24 * 60 * 60 * 1000);
-  const elapsed = Math.max(now.getTime() - currentStart.getTime(), 60 * 1000);
-  const previousStart = new Date(currentStart.getTime() - elapsed);
+    : period === "date"
+      ? selectedDateStart!
+      : period === "year"
+        ? new Date(Date.UTC(manilaNow.getUTCFullYear(), manilaNow.getUTCMonth() - 11, 1) - MANILA_OFFSET_MS)
+        : new Date(now.getTime() - (period === "week" ? 7 : 30) * 24 * 60 * 60 * 1000);
+  const currentEnd = period === "date"
+    ? new Date(Math.min(now.getTime(), currentStart.getTime() + 24 * 60 * 60 * 1000))
+    : now;
+  const elapsed = Math.max(currentEnd.getTime() - currentStart.getTime(), 60 * 1000);
+  const localYearStart = period === "year" ? new Date(currentStart.getTime() + MANILA_OFFSET_MS) : null;
+  const previousStart = localYearStart
+    ? new Date(Date.UTC(localYearStart.getUTCFullYear(), localYearStart.getUTCMonth() - 12, 1) - MANILA_OFFSET_MS)
+    : new Date(currentStart.getTime() - elapsed);
   return {
-    current: { start: currentStart, end: now },
+    current: { start: currentStart, end: currentEnd },
     previous: { start: previousStart, end: new Date(previousStart.getTime() + elapsed) },
     queryStart: previousStart,
-    queryEnd: now,
+    queryEnd: currentEnd,
   };
 }
 
@@ -127,6 +154,12 @@ function getBuckets(period: Period, current: Window) {
   const hourFormatter = new Intl.DateTimeFormat("en-PH", {
     hour: "numeric", timeZone: "Asia/Manila",
   });
+  const selectedDateFormatter = new Intl.DateTimeFormat("en-PH", {
+    month: "short", day: "numeric", year: "numeric", timeZone: "Asia/Manila",
+  });
+  const monthFormatter = new Intl.DateTimeFormat("en-PH", {
+    month: "short", year: "2-digit", timeZone: "Asia/Manila",
+  });
 
   if (period === "today") {
     for (let index = 0; index < 8; index += 1) {
@@ -143,6 +176,18 @@ function getBuckets(period: Period, current: Window) {
       starts.push(start);
       ends.push(new Date(start.getTime() + 24 * 60 * 60 * 1000));
       labels.push(dateFormatter.format(start));
+    }
+  } else if (period === "date") {
+    starts.push(current.start);
+    ends.push(current.end);
+    labels.push(selectedDateFormatter.format(current.start));
+  } else if (period === "year") {
+    for (let index = 0; index < 12; index += 1) {
+      const start = new Date(Date.UTC(localStart.getUTCFullYear(), localStart.getUTCMonth() + index, 1) - MANILA_OFFSET_MS);
+      const nextMonth = new Date(Date.UTC(localStart.getUTCFullYear(), localStart.getUTCMonth() + index + 1, 1) - MANILA_OFFSET_MS);
+      starts.push(start);
+      ends.push(new Date(Math.min(current.end.getTime(), nextMonth.getTime())));
+      labels.push(monthFormatter.format(start));
     }
   } else {
     const count = 6;
@@ -310,7 +355,10 @@ Deno.serve(async (request) => {
 
   const adminEmail = typeof body.adminEmail === "string" ? body.adminEmail.trim().toLowerCase() : "";
   const adminPassword = typeof body.adminPassword === "string" ? body.adminPassword : "";
-  const period = body.period === "today" || body.period === "month" ? body.period : "week";
+  const period: Period = body.period === "today" || body.period === "month" || body.period === "year" || body.period === "date"
+    ? body.period
+    : "week";
+  const selectedDate = typeof body.date === "string" ? body.date : "";
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -337,7 +385,7 @@ Deno.serve(async (request) => {
       console.error("[admin-analytics] Could not validate admin account:", adminError.message);
       return jsonResponse({ error: "Could not verify admin access" }, 500);
     }
-    if (!admin || admin.password_hash !== adminPassword || !["admin", "rider"].includes(admin.admin_type)) {
+    if (!admin || admin.password_hash !== adminPassword || !["admin", "business_customer", "rider"].includes(admin.admin_type)) {
       return jsonResponse({ error: "Admin access could not be verified" }, 401);
     }
 
@@ -382,7 +430,14 @@ Deno.serve(async (request) => {
   if (isTerminalAdmin && !terminalId) return jsonResponse({ error: "This Rider Admin has no terminal assignment" }, 403);
 
   const now = new Date();
-  const windows = getWindows(period, now);
+  const selectedDateStart = period === "date" ? parseManilaDateStart(selectedDate) : undefined;
+  if (period === "date" && !selectedDateStart) {
+    return jsonResponse({ error: "Choose a valid calendar date." }, 400);
+  }
+  if (selectedDateStart && selectedDateStart > manilaMidnightUtc(new Date(now.getTime() + MANILA_OFFSET_MS))) {
+    return jsonResponse({ error: "Choose today or an earlier date." }, 400);
+  }
+  const windows = getWindows(period, now, selectedDateStart || undefined);
   const rideColumns = "id,terminal_id,driver_id,accepted_driver_id,created_at,accepted_at,completed_at,status,ride_type,pickup_location,cancel_reason,cancelled_by";
   const orderColumns = "id,terminal_id,created_at,payment_proof_uploaded_at,status,payment_method,payment_proof_url,payment_confirmed_at";
 
